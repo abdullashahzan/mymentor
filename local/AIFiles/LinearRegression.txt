@@ -1,0 +1,95 @@
+# Implement simple linear regression.
+import matplotlib.pyplot as plt # Import the matplotlib library for visualization.
+from matplotlib.font_manager import FontProperties
+import numpy as np
+
+#Input a local font file to prevent garbled characters.
+#font_set = FontProperties(fname=r"./work/ simsun.ttc", size=12)
+# Provide a dataset for training.
+x_train = [4,8,5,10,12]
+y_train = [20,50,30,70,60]
+
+def draw(x_train,y_train):
+    plt.scatter(x_train, y_train)
+
+#Define a function to obtain the slope *w* and intercept *b*.
+#Calculate the slope and intercept using the least squares method, ensuring that the derivative is zero.
+def fit(x_train,y_train): 
+    size = len(x_train)
+    numerator = 0 # Initialize the numerator.
+    denominator = 0# Initialize the denominator.   
+    for i in range(size):
+        numerator += (x_train[i]-np.mean(x_train))*(y_train[i]-np.mean(y_train))
+        denominator +=(x_train[i]-np.mean(x_train))**2
+    w = numerator/denominator
+    b = np.mean(y_train)-w*np.mean(x_train)
+    return w,b
+
+# Input *x* and calculate the output value based on the slope *w* and intercept *b*.
+def predict(x,w,b):  
+    #Use the model for prediction.
+    y = w*x+b
+    return y
+
+def fit_line(w,b):
+#Use the test dataset for testing and draw a plot.
+    x = np.linspace(4,15,9) # Use the linspace function to generate an arithmetic progression.    #numpy.limspace(start,stop,num,endpoint=True,retstep=False,dtype=None,axis=0#)
+    y = w*x+b
+    plt.plot(x,y)
+    plt.show()
+if __name__ =="__main__":
+    draw(x_train,y_train)
+    w,b = fit(x_train,y_train)
+    print(w,b) # Output the slope and intercept.
+fit_line(w,b) # Draw the prediction function plot.
+
+# Implement multiple linear regression.
+# Import modules.
+import numpy as np
+import pandas as pd
+
+#Create an array. The first three columns indicate the independent variable *X*, and the last column indicates the dependent variable *Y*.
+data = np.array([[3, 2, 9, 20],
+                 [4, 10, 2, 72],
+                 [3, 4, 9, 21],
+                 [12, 3, 4, 20]])
+print("data:", data, "\n")
+
+X = data[:, :-1]
+Y = data[:, -1]
+
+X = np.mat(np.c_[np.ones(X.shape[0]), X]) # Add constant term coefficients to the coefficient matrix.
+Y = np.mat(Y) # Convert the array into a matrix.
+
+print("X:", X, "\n")
+print("Y:", Y, "\n")
+
+#Analytical solution for obtaining the optimal parameter vector B using the least squares method (the derivative of the objective function is zero):
+B = np.linalg.inv(X.T * X) * (X.T) * (Y.T)
+print("B:", B, "\n") # Output coefficients. The first term is a constant term, and others are regression coefficients.
+print("1,60,60,60 Prediction result:", np.mat([1, 60, 60, 60]) * B, "\n") # Prediction result
+
+# Related coefficients
+Q_e = 0
+Q_E = 0
+Y_mean = np.mean(Y)
+for i in range(Y.size):
+    Q_e += pow(np.array((Y.T)[i] - X[i] * B), 2)
+    Q_E += pow(np.array(X[i] * B) - Y_mean, 2)
+R2 = Q_E / (Q_e + Q_E)
+print("R2", R2)
+
+from sklearn.linear_model import LinearRegression
+import numpy as np
+model = LinearRegression()
+
+x_train = np.array([[2,4],[5,8],[5,9],[7,10],[9,12]])
+y_train = np.array([20,50,30,70,60])
+
+model.fit(x_train,y_train)
+#fit(x, y, sample_weight=None), where *x* indicates the training dataset, *y* indicates the target value, and **sample_weight** indicates the number of samples
+#coef_coefficient w; intercept_intercept
+print(model.coef_) # Output the coefficient *w*.
+print(model.intercept_) # Output the intercept *b*.
+print(model.score(x_train,y_train)) # Output the training result.
+

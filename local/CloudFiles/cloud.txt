@@ -1,0 +1,2780 @@
+12/18/25, 11:43 AM notes.md
+🚀
+Discuz! Forum Deployment on Huawei Cloud: Simplified
+Lab Notes
+These notes capture the entire lab process for building a computing and storage
+architecture for a Discuz! forum on Huawei Cloud. Everything is explained clearly, and
+all the essential commands are included!
+⚙
+1. Lab Environment & Goal Overview
+What we did: We built a website (a Discuz! forum) using two main servers—one
+for the database and one for the web application—and set up shared storage.
+The Goal: To learn how to deploy stable services (like MySQL) using Images and
+dynamic services (like Discuz! Web) using Scripts, and then connect them using
+SFS (shared storage).
+Preset Lab: We clicked the “Preset Lab” button.
+Why? It’s like having a helper set up your workstation with all the tools,
+accounts, and basic network wires already connected, so we could focus on
+the main build.
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Cloud Computing and Storage/notes.md 1/912/18/25, 11:43 AM notes.md
+💻
+2. Deploying the MySQL Database Server (The Stable Way: Using
+an Image)
+The database server stores all the forum posts, user accounts, and settings. Since the
+software on this server (MySQL) rarely changes, using an Image is the fastest way to
+deploy it.
+2.1. Step 1: Creating an Image
+An image is a snapshot or a perfect copy of a server at a specific moment. We made
+an image from a server that already had MySQL installed ( ecs-db ).
+Region AP-Singapore Type Create Image Source **ECS Name img-db
+Service: IMS (Image Management Service).
+Wait Time: About 5 minutes for the snapshot to finish.
+2.2. Step 2: Applying the Created Image
+We used the new snapshot ( img-db ) to create a brand-new, ready-to-go database
+server ( ecs-db-img ).
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Cloud Computing and Storage/notes.md 2/912/18/25, 11:43 AM notes.md
+Image **Private image Network **vpc-primary ECS Name ecs-db-img
+Service: ECS (Elastic Cloud Server).
+Result: We now have a second MySQL server ready to connect to the forum.
+🌐
+3. Deploying the Discuz! Web Server (The Flexible Way: Using
+Scripts)
+The web server handles the forum software (Discuz!) and constantly serves new
+pages. Because we might need to change the application or update it often, we used
+a script to automate the setup process.
+3.1. Step 1: Creating and Uploading the Deployment Script
+We wrote a set of instructions (a script) to download the forum files, set up the web
+server software (Apache/PHP), and then stored it safely in OBS.
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Cloud Computing and Storage/notes.md 3/912/18/25, 11:43 AM notes.md
+vim script.txt Creates and opens a new file named script.txt on the desktop.
+#!/bin/bash Tells the system to run the commands using the Bash shell.
+yum install -y httpd php...
+Installs all the necessary web server and PHP components.
+systemctl start httpd.service
+Starts the Apache web server (the software that serves web pages).
+wget https://labfiles-... Downloads the zipped Discuz! forum software.
+unzip Discuzenglish.zip Unzips the forum files.
+mv root/Discuz/* /var/www/html Moves the forum files into the public web folder.
+chmod -R 777 /var/www/html
+Gives the web server full permission to read and write files in the folder (needed for
+the installation).
+Saving the File: Press “Shift” + “:”, then enter wq and press Enter.
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Cloud Computing and Storage/notes.md 4/912/18/25, 11:43 AM notes.md
+OBS Bucket: We created a storage bucket called discuz-obs (or similar, must be
+unique).
+Crucial Setting: Bucket Policies were set to Public Read/Write so the server
+could download the script.
+Upload: We uploaded script.txt to the discuz-obs bucket.
+URL: We copied the Object URL (e.g., https://discuz-obs.obs.../script.txt ) for
+the next step.
+3.2. Step 2: Creating the Web ECS with the Script (User Data)
+We configured the network and then launched the web server ( ecs-web ), giving it the
+script’s URL in the User Data section.
+Network Setup:
+Subnet: Created subnet-web (CIDR: 192.168.1.0/24 ).
+Security Group: Created sg-web using the General-purpose web server
+template to allow web traffic (ports 80/443).
+ECS Configuration:
+Image: Public image | CentOS 7.6 64bit.
+Network: vpc-primary \| subnet-web .
+EIP: Auto assign (so we can access it from the internet).
+Advanced Options (User Data): This is where the magic happens! We entered
+the following script, which downloads and runs our deployment script:
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Cloud Computing and Storage/notes.md 5/912/18/25, 11:43 AM notes.md
+#!/bin/bash
+cd /root
+wget https://discuz-obs.obs.ap-southeast-
+3.myhuaweicloud.com/script.txt # **<-- REPLACE WITH YOUR OBS URL**
+mv script.txt script.sh
+sed -i 's/\r//' script.sh
+chmod +x script.sh
+bash script.sh
+Key Command Explained: sed -i 's/\r//' script.sh
+When a file is created on a Windows computer and run on Linux, it can cause
+problems because of hidden characters ( \r ). This command removes those
+hidden characters, making the script safe to run on Linux.
+3.3. Step 3: Installing Discuz! and Connecting to MySQL
+1. We copied the EIP (public internet address) of ecs-web .
+2. We opened a browser and went to http://EIP of ecs-web .
+3. We followed the Discuz! installer steps:
+Clicked “I agree” and “Next.”
+Selected “A new installation Discuz! X.”
+Database Configuration:
+Database server: We entered the Private IP address of our database
+server ( ecs-db-img ).
+Database PW: Hw0d21d59c6 .
+We set the Admin PW.
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Cloud Computing and Storage/notes.md 6/912/18/25, 11:43 AM notes.md
+Result: The web server is now successfully talking to the database server!
+💾
+4. Storage: Mounting an SFS File System (Shared Space)
+We needed a way for multiple servers (though we only used one in the final step, SFS
+is for sharing) to access the same files, especially for uploaded attachments and
+media.
+Service: SFS (Scalable File Service) Turbo.
+Analogy: SFS is like a large, shared network folder that multiple cloud
+computers can connect to at the same time.
+4.1. Step 1: Purchasing an SFS File System
+We created a new file system instance.
+Name sfs-turbo-test Protocol NFS (Network File System)
+4.2. Step 2: Mounting the SFS File System
+We told the web server ( ecs-web ) how to find and connect to the shared folder.
+1. Reset Password: We reset the password for the ecs-web server.
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Cloud Computing and Storage/notes.md 7/912/18/25, 11:43 AM notes.md
+2. SSH Login: We used the terminal to log into the web server using its EIP:
+ssh root@EIP of ecs-web
+3. Install Necessary Software: We installed the tools needed to connect to a
+network file system.
+yum -y install nfs-utils
+yum -y install bind-utils
+4. Create Local Folder (Mount Point): We created an empty folder on the web
+server where the SFS files will appear.
+mkdir /mnt/sfs_turbo
+5. Run Mount Command: We copied the specific Linux Mount command from the
+SFS console and ran it. (The command uses the SFS service IP and the path.)
+6. Verify: We checked the connection:
+mount -l
+Result: The web server can now store and retrieve files in the shared SFS volume,
+making it easy to share data if we deploy more web servers later!
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Cloud Computing and Storage/notes.md 8/912/18/25, 11:43 AM notes.md
+❓
+5. FAQs: Image vs. Script
+Speed Fast to deploy. Slow to deploy (must execute script).
+Flexibility Low (Need to make a new snapshot for changes).
+High (Can be easily changed before deployment).
+Cost Expensive (You pay to store the image).
+Cheap (Just pay for basic server storage).
+Recommended For Stable things that don’t change (e.g., MySQL).
+Dynamic things that change often (e.g., Web App).
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Cloud Computing and Storage/notes.md 9/912/18/25, 11:42 AM notes.md
+🔍
+O&M Lab Notes: Monitoring and
+Logging for Our Cloud App - Master Guide
+🎯
+Mental Model: Your Cloud Spaceship
+🛰
+Imagine your cloud application as a tiny, important spaceship . To keep it running
+smoothly and fix problems fast, you need two main tools:
+🎮
+Cloud Eye The ship’s dashboard and control panel
+Real-time monitoring and alerting
+📖
+LTS (Log Tank Service) The ship’s flight recorder and captain’s log
+Historical log collection and analysis
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 1/3512/18/25, 11:42 AM notes.md
+🏗
+Phase 1: Building Our Spaceship (Application
+Infrastructure)
+Infrastructure Blueprint
+┌─────────────────────────────────────────────────────────────┐
+│ CLOUD APPLICATION LAYERS │
+├─────────────────────────────────────────────────────────────┤
+│ Layer 4: Application │ Discuz! Forum Software │
+│ │ • Web interface │
+│ │ • User authentication │
+├─────────────────────────────┼───────────────────────────────┤
+│ Layer 3: Compute │ ECS (Elastic Cloud Server) │
+│ │ • Virtual machine │
+│ │ • Runs application code │
+├─────────────────────────────┼───────────────────────────────┤
+│ Layer 2: Database │ RDS (Relational DB Service) │
+│ │ • Managed MySQL database │
+│ │ • Stores user data │
+├─────────────────────────────┼───────────────────────────────┤
+│ Layer 1: Networking │ VPC + Subnets + Security │
+│ │ • Private network isolation │
+│ │ • Traffic control │
+└─────────────────────────────┴───────────────────────────────┘
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 2/3512/18/25, 11:42 AM notes.md
+Step-by-Step Implementation
+1. VPC & Network Architecture
+What We Built:
+VPC: vpc-primary
+├── Subnet-web (192.168.1.0/24) ← Web Server Network
+│ └── ECS Instance
+└── Subnet-db (192.168.2.0/24) ← Database Network (NEW!)
+└── RDS Instance
+Key Concept: Network Segmentation
+Security Benefit: Separates web and database traffic
+Performance Benefit: Reduces broadcast domains
+Operational Benefit: Independent scaling of tiers
+2. Security Configuration
+Security Group: sg-db - The Digital Bouncer
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 3/3512/18/25, 11:42 AM notes.md
+Inbound TCP 3306 ECS Private IP Allow database access
+Inbound ALL ALL Deny All Default deny rule
+Why This Matters:
+✅
+Zero Trust Model: Only explicit permissions are allowed
+✅
+Least Privilege: ECS can only connect on MySQL port
+✅
+Audit Trail: Every connection attempt is logged
+Finding the Private IP:
+# In ECS Console:
+1. Navigate to "Elastic Cloud Server"
+2. Click on your instance (ecs-web)
+3. Find "Private IP" in "Network Information"
+3. Database Deployment
+RDS Configuration Summary:
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 4/3512/18/25, 11:42 AM notes.md
+Instance Name rds-web Clear naming for operations
+Engine MySQL 5.7 Proven, stable version Type Primary/Standby High availability
+Primary AZ AZ5 Spread risk across zones Standby AZ AZ3 Automatic failover
+Security Group sg-db Enforces network policy
+Password Huawei@123#$ Strong credentials
+Pro Tip: Always use different passwords for different services and store them
+securely!
+4. Application Installation
+Discuz! Configuration Flow:
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 5/3512/18/25, 11:42 AM notes.md
+http://ECS_Public_IP:80
+↓
+License Agreement (Click "I Agree")
+↓
+System Check (Verify permissions)
+↓
+Installation Type (Choose "New Installation")
+↓
+Database Configuration:
+• Server: RDS Private IP
+• Password: RDS Root Password
+↓
+Admin Account Setup
+↓
+Installation Complete!
+Verification: Access http://ECS_Public_IP:80 again to see your forum!
+👁
+Phase 2: Cloud Eye - The Monitoring Dashboard
+A. Metric Monitoring: The Gauges and Dials
+What Are Metrics?
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 6/3512/18/25, 11:42 AM notes.md
+CPU Usage: How hard your computer is working (0-100%)
+Memory Usage: How much RAM is being used
+Disk I/O: Reading/writing speed to storage
+Network Traffic: Data flowing in/out
+Viewing Metrics in Cloud Eye:
+Navigation: Service List → Management & Deployment → Cloud Eye
+↓
+Select "Elastic Cloud Server" from Resource Type
+↓
+Choose your ECS instance (ecs-web)
+↓
+View Dashboard with 6 Default Charts:
+1. CPU Usage (%)
+2. Memory Usage (MB)
+3. Disk Read Rate (KB/s)
+4. Disk Write Rate (KB/s)
+5. Network Inbound (bit/s)
+6. Network Outbound (bit/s)
+Customization Options:
+Add/Remove specific charts
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 7/3512/18/25, 11:42 AM notes.md
+Change time range (1h, 3h, 12h, 24h, 7d)
+Export data for analysis
+Set comparison periods
+B. Event Monitoring & Alarms: Red Lights & Sirens
+SMN (Simple Message Notification): The Messenger Service
+Conceptual Model:
+Event → Alarm Rule → SMN Topic → Subscriber → Notification
+Step 1: Create SMN Topic (The Radio Station)
+1. Service List → Application Services → Simple Message Notification
+2. Topics → Create Topic
+3. Name: "test"
+4. Display Name: "Test Topic"
+5. Create
+Step 2: Add Subscription (Tuning In)
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 8/3512/18/25, 11:42 AM notes.md
+1. Click on "test" topic
+2. Subscriptions → Add Subscription
+3. Protocol: Email
+4. Endpoint: your_email@example.com
+5. Confirm subscription via email
+Step 3: Create Alarm Rule (The Trigger)
+Rule Configuration: alarm-reboot
+Condition: IF (Event Source = ECS) AND (Event Name = "ECS restarted")
+Action: THEN (Send to SMN Topic = "test")
+Severity: Critical
+Enabled: Yes
+Anatomy of an Event:
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 9/3512/18/25, 11:42 AM notes.md
+{
+"event_name": "ECS restarted",
+"event_source": "ECS",
+"time": "2023-01-01T12:00:00Z",
+"resource_id": "ecs-web-id",
+"resource_name": "ecs-web",
+"resource_type": "ecs",
+"severity": "critical"
+}
+Step 4: Testing the Alarm
+Manual Test Procedure:
+1. ECS Console → Find ecs-web → More → Restart
+2. Wait 1-2 minutes for event detection
+3. Check your email for alarm notification
+Expected Email Content:
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 10/3512/18/25, 11:42 AM notes.md
+Subject: [CES Alarm][Critical] alarm-reboot
+Body:
+- Alarm Status: OK → ALARM
+- Resource Name: ecs-web
+- Event: ECS restarted
+- Time: 2023-01-01 12:00:00 GMT+08:00
+- Alarm Policy: alarm-reboot
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 11/3512/18/25, 11:42 AM notes.md
+📝
+Phase 3: LTS (Log Tank Service) - The Flight Recorder
+A. Log Collection Architecture
+┌─────────────────────────────────────────────────────────────┐
+│ LOG COLLECTION FLOW │
+├─────────────────────────────────────────────────────────────┤
+│ ECS Instance │
+│ ┌─────────────────────────────────────────────────────┐ │
+│ │ /var/log/messages (Log File) │ │
+│ │ - Contains system and service logs │ │
+│ └──────────────┬──────────────────────────────────────┘ │
+│ │ │
+│ ┌──────▼──────┐ │
+│ │ ICAgent │ ← Tiny agent running on ECS │
+│ │ (v2.4.6) │ • Collects logs │
+│ └──────┬──────┘ • Sends to LTS │
+│ │ │
+│ ▼ │
+│ Huawei Cloud LTS Service │
+│ ┌─────────────────────────────────────────────────────┐ │
+│ │ Log Group: "default" │ │
+│ │ └─ Log Stream: "stream-web" │ │
+│ │ • Stores structured log data │ │
+│ │ • Enables query and visualization │ │
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 12/3512/18/25, 11:42 AM notes.md
+│ └─────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+B. Step-by-Step LTS Configuration
+Step 1: Create Log Structure
+Log Group (Container of containers) → Log Stream (Individual container)
+1. Create Log Group:
+Service List → Management & Deployment → Log Tank Service
+↓
+Log Groups → Create Log Group
+↓
+Name: "default" (or custom name)
+Retention Period: 7 days (configurable)
+Create
+2. Create Log Stream:
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 13/3512/18/25, 11:42 AM notes.md
+Click on "default" Log Group
+↓
+Log Streams → Create Log Stream
+↓
+Name: "stream-web"
+Create
+Step 2: Install and Configure ICAgent
+ICAgent = Intelligent Collection Agent
+Prerequisites Checklist:
+✅
+ECS is running
+✅
+Log Group/Stream created
+✅
+Have valid AK/SK credentials
+✅
+Network connectivity to LTS
+Installation Process:
+1. LTS Console → Log Collection → ICAgent Management
+2. Click "Install ICAgent"
+3. Select Host Type: Linux
+4. Get installation command
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 14/3512/18/25, 11:42 AM notes.md
+Critical Configuration: AK/SK (Access Key/Secret Key)
+What Are AK/SK?
+AK (Access Key): Like a username (public)
+SK (Secret Key): Like a password (PRIVATE!)
+Where to Find AK/SK:
+Huawei Cloud Console → Top Right (Username) → My Credentials
+↓
+Access Keys → Create Access Key
+↓
+Download credentials.csv (ONCE! Never share!)
+Agent Status Troubleshooting:
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 15/3512/18/25, 11:42 AM notes.md
+✅
+Normal Agent working correctly None needed
+⚠
+Abnormal Communication issue Check AK/SK, network
+❌
+Not Installed Agent not present Install ICAgent
+🔄
+Upgrading Agent updating Wait 2-3 minutes
+Step 3: Configure Host Group & Log Collection
+Host Group Concept:
+Logical grouping of servers with similar logging needs
+Example: hccdp group for all web servers
+Configuration Steps:
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 16/3512/18/25, 11:42 AM notes.md
+1. LTS → Log Collection → Host Groups
+2. Create Host Group: "hccdp"
+3. Add ECS to group
+4. Configure Log Collection:
+- Log Path: /var/log/messages
+- Log Stream: stream-web
+- Extraction Mode: Full Text
+Intelligent Extraction Explained:
+Raw Log: Jan 1 12:00:00 localhost systemd: Stopped httpd.service
+↓
+Extraction Configuration:
+• Separator: Colon (:)
+• Fields: [Timestamp], [Host], [Service], [Message]
+↓
+Structured Log:
+{
+"timestamp": "Jan 1 12:00:00",
+"host": "localhost",
+"service": "systemd",
+"message": "Stopped httpd.service"
+}
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 17/3512/18/25, 11:42 AM notes.md
+C. Log Analysis & Visualization
+Viewing Logs:
+LTS Console → Log Query
+↓
+Select: Log Group = "default", Log Stream = "stream-web"
+↓
+Time Range: Last 15 minutes (adjustable)
+↓
+Click "Search"
+Visualization Types:
+1. Table View: Raw log entries with timestamps
+2. Bar Chart: Log frequency over time
+3. Pie Chart: Distribution by service/severity
+4. Line Chart: Trend analysis
+Sample Query Results:
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 18/3512/18/25, 11:42 AM notes.md
+┌─────────────────────────┬─────────────┬────────────┬─────────────────────────┐
+│ Timestamp │ Host │ Service │ Message │
+├─────────────────────────┼─────────────┼────────────┼─────────────────────────┤
+│ Jan 1 12:00:00 │ localhost │ systemd │ Stopped httpd.service │
+│ Jan 1 12:00:01 │ localhost │ crond │ Started periodic cmd │
+│ Jan 1 12:00:02 │ localhost │ sshd │ Accepted password │
+└─────────────────────────┴─────────────┴────────────┴─────────────────────────┘
+D. Log-Based Alarms
+Creating a Log Alarm Rule:
+Goal: Detect when any service stops unexpectedly
+Configuration:
+Rule Name: "log-alarm-stopped"
+Log Group: default
+Log Stream: stream-web
+Query Statement: service = "systemd" AND message like "%Stopped%"
+Check Interval: 1 minute
+Trigger Condition: Number of logs >= 1
+Action: Send to SMN Topic "test"
+Keyword Statistics Concept:
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 19/3512/18/25, 11:42 AM notes.md
+Count occurrences of specific words/patterns
+Example: Count “Stopped”, “Error”, “Failed” occurrences
+Trigger alarm when threshold exceeded
+Testing the Log Alarm
+Simulating a Service Stop:
+# SSH into ECS (using EIP and password)
+ssh root@<ECS_Public_IP>
+# Stop a service to generate log
+systemctl stop httpd
+# OR
+systemctl Stopped httpd
+# Check if logged
+tail -f /var/log/messages
+Expected Alert Flow:
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 20/3512/18/25, 11:42 AM notes.md
+1. Service stopped → Log entry created
+2. ICAgent collects log (within 1 minute)
+3. LTS processes and analyzes log
+4. Alarm rule triggers (if "Stopped" found)
+5. SMN sends email notification
+6. You receive alert within 2-3 minutes
+🔧
+Comprehensive Troubleshooting Guide
+Common Issues & Solutions
+1. ICAgent Status: “Abnormal”
+Root Causes:
+Invalid AK/SK credentials
+Network connectivity issues
+Agent process crashed
+Diagnosis Steps:
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 21/3512/18/25, 11:42 AM notes.md
+# Check agent status on ECS
+systemctl status icagent
+# Check agent logs
+tail -f /opt/icagent/icagent.log
+# Verify connectivity
+telnet lts.ap-southeast-3.myhuaweicloud.com 443
+Solution: Reinstall ICAgent with correct AK/SK
+2. No Logs Appearing in LTS
+Checklist:
+✅
+ICAgent status = Normal
+✅
+Log path configured correctly
+✅
+Host added to host group
+✅
+Log file exists and has permissions
+✅
+Time range in query is correct
+Debug Command:
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 22/3512/18/25, 11:42 AM notes.md
+# Check if logs are being generated
+ls -la /var/log/messages
+# Check file permissions (should be readable)
+cat /var/log/messages | head -5
+# Test ICAgent collection manually
+/opt/icagent/bin/icagent -t
+3. No Alarm Notifications
+Investigation Path:
+1. Check Alarm Rule Status (Enabled/Disabled)
+2. Verify SMN Topic exists
+3. Confirm email subscription is "Confirmed"
+4. Check spam/junk folder
+5. Verify event actually occurred
+6. Check Cloud Eye event logs
+4. Performance Issues
+Monitoring Metrics to Watch:
+ICAgent CPU/Memory: Should be < 10%
+Log Volume: Adjust collection if too high
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 23/3512/18/25, 11:42 AM notes.md
+Network Traffic: Monitor LTS egress costs
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 24/3512/18/25, 11:42 AM notes.md
+📊
+Key Terminology Reference
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 25/3512/18/25, 11:42 AM notes.md
+Cloud Eye Monitoring service that watches cloud resources
+Car dashboard showing speed, fuel, engine lights
+LTS Service that collects and analyzes log files Airplane black box recorder
+SMN Notification service that sends alerts Emergency broadcast system
+Topic Channel for sending messages Radio station frequency
+Subscription Endpoint receiving topic messages Radio tuned to a station
+ICAgent Software that collects logs from servers
+Security camera recording footage
+AK/SK Credentials for API access Username and password for bank account
+Host Group Logical group of servers Department in a company
+Log Stream Container for related log data Chapter in a book
+Metric Numerical measurement of resource Speedometer reading
+Event Discrete occurrence in the system Check engine light turning on
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 26/3512/18/25, 11:42 AM y notes.mgd g g
+🎯
+Best Practices Summary
+Monitoring Best Practices:
+1. Set Meaningful Thresholds:
+CPU: Warning at 70%, Critical at 90%
+Memory: Warning at 80%, Critical at 95%
+Disk: Warning at 85%, Critical at 95%
+2. Create Escalation Policies:
+Level 1: Email to team
+Level 2: SMS to on-call (repeated alerts)
+Level 3: Phone call (critical, unacknowledged)
+3. Regular Review:
+Weekly: Review false positives
+Monthly: Tune thresholds
+Quarterly: Test alerting chain
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 27/3512/18/25, 11:42 AM notes.md
+Logging Best Practices:
+1. Log Structure:
+Use consistent timestamp format
+Include severity levels (INFO, WARN, ERROR)
+Add correlation IDs for tracing
+2. Retention Strategy:
+7 days: Hot storage (frequent queries)
+30 days: Warm storage (occasional queries)
+1 year: Cold storage (compliance/audit)
+3. Security Considerations:
+Never log passwords or secrets
+Mask PII (Personally Identifiable Information)
+Encrypt sensitive log data
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 28/3512/18/25, 11:42 AM notes.md
+🔮
+Advanced Scenarios for Future Learning
+1. Custom Metrics
+# Push custom application metrics to Cloud Eye
+curl -X POST "https://ces.myhuaweicloud.com/V1.0/..."
+-d '{"metric_name":"user_logins","value":42}'
+2. Log Correlation
+Combine Cloud Eye metrics with LTS logs
+Example: High CPU + “Out of memory” logs = Memory leak
+Use time synchronization for accurate correlation
+3. Automated Remediation
+Alarm Triggered → Runbook Automation → Auto-fix
+Example:
+1. Alarm: Disk > 90%
+2. Action: Run cleanup script
+3. Verify: Disk < 70%
+4. Notify: Cleanup complete
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 29/3512/18/25, 11:42 AM notes.md
+4. Distributed Tracing
+User Request → Load Balancer → Web Server → Database
+↓ ↓ ↓ ↓
+Trace ID: abc123 abc123 abc123 abc123
+Correlate across all logs and metrics!
+💡
+Quick Reference Commands
+ECS Monitoring Commands:
+# Check CPU usage
+top -b -n 1 | grep "Cpu(s)"
+# Check memory
+free -h
+# Check disk
+df -h
+# Check running processes
+ps aux --sort=-%cpu | head -10
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 30/3512/18/25, 11:42 AM notes.md
+Log Investigation Commands:
+# Tail logs in real-time
+tail -f /var/log/messages
+# Search for errors
+grep -i "error\|failed\|stopped" /var/log/messages
+# Count occurrences
+grep -c "Stopped" /var/log/messages
+# View last 50 lines with timestamps
+tail -50 /var/log/messages | grep -E "^[A-Z][a-z]{2}"
+Service Management:
+# Check service status
+systemctl status httpd
+# Start service
+systemctl start httpd
+# Stop service (for testing)
+systemctl stop httpd
+# Restart service
+systemctl restart httpd
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 31/3512/18/25, 11:42 AM notes.md
+🏁
+Final Architecture Review
+Your complete monitoring stack:
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 32/3512/18/25, 11:42 AM notes.md
+┌─────────────────────────────────────────────────────────────┐
+│ COMPLETE MONITORING STACK │
+├─────────────────────────────────────────────────────────────┤
+│ Layer 4: Notification & Action │
+│ ├── SMN Topics & Subscriptions │
+│ ├── Email/SMS Alerts │
+│ └── Integration with Ticketing Systems │
+│ │
+│ Layer 3: Analysis & Alerting │
+│ ├── Cloud Eye Alarm Rules │
+│ ├── LTS Log Alarm Rules │
+│ ├── Dashboard Visualization │
+│ └── Historical Trend Analysis │
+│ │
+│ Layer 2: Collection & Storage │
+│ ├── Cloud Eye (Metrics & Events) │
+│ ├── LTS (Structured Logs) │
+│ ├── ICAgent (Log Collector) │
+│ └── Data Retention Policies │
+│ │
+│ Layer 1: Infrastructure │
+│ ├── ECS (Application Host) │
+│ ├── RDS (Database) │
+│ ├── VPC/Subnets (Networking) │
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 33/3512/18/25, 11:42 AM notes.md
+│ └── Security Groups (Access Control) │
+└─────────────────────────────────────────────────────────────┘
+📈
+Success Metrics for Your O&M Setup
+MTTD (Mean Time to Detect) < 5 minutes Time from issue to alert
+MTTR (Mean Time to Resolve) < 30 minutes Time from alert to fix
+Alert Accuracy > 95% (Valid alerts)/(Total alerts)
+Log Coverage 100% of critical systems Systems with ICAgent
+Notification Success > 99% Alerts delivered successfully
+🎉
+Congratulations! You’ve now mastered the complete O&M lifecycle:
+✅
+Infrastructure Setup (Building the ship)
+✅
+Metric Monitoring (Watching the gauges)
+✅
+Event Alerting (Setting up alarms)
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 34/3512/18/25, 11:42 AM notes.md
+✅
+Log Collection (Installing the flight recorder)
+✅
+Log Analysis (Reading the logs)
+✅
+Proactive Monitoring (Anticipating issues)
+Remember: Good monitoring tells you what’s happening. Great monitoring tells
+you what’s about to happen. You’re now equipped to build the latter!
+☕🚀
+“May your alerts be few, your uptime be high, and your coffee be strong!”
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Design cases and practices of an O&M solution/notes.md 35/3512/18/25, 11:41 AM notes.md
+High-Performance Network Solution —
+Full Notes (Aya’s Simplified & Complete
+Guide)
+These notes are written so that even if you read them after one whole
+year, you’ll remember everything clearly.
+I will explain complex networking concepts using easy, child-like
+analogies where needed.
+🌐
+1. What Is This Exercise About?
+This lab teaches you how to design a high‑performance network
+architecture on Huawei Cloud that supports a real web application —
+Discuz!.
+You will learn how to:
+Build a secure website using ECS + RDS.
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/High Performance Network Solution/notes.md 1/1512/18/25, 11:41 AM notes.md
+Use EIP & NAT Gateway to access the website over the
+Internet.
+Connect VPCs privately using VPC Peering.
+Access services using domain names (DNS) instead of remembering
+IPs.
+Use Enterprise Router (explained in FAQs).
+This whole setup mimics a professional production environment used by
+real companies.
+🏗
+2. Lab Presetting — Why Needed?
+Before starting, you must click Preset Lab on the exercise page.
+Why?
+Because the preset: - Automatically creates basic infrastructure (ECS,
+VPC, keys, etc.) - Gives you temporary credentials\
+Ensures the lab environment matches the tutorial exactly\
+Prevents accidental resource charges or missing components
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/High Performance Network Solution/notes.md 2/1512/18/25, 11:41 AM notes.md
+Think of it like entering a kitchen where all ingredients are already
+prepared.
+🚪
+3. What Is the “Exercise Operation
+Page”?
+It is simply the virtual desktop page that loads when you start the
+lab.
+This is where you: - See Linux/Windows desktop\
+Open the browser\
+Open Huawei Cloud console\
+Perform all operations
+🧩
+4. Core Network Components
+(Explained Simply)
+Here is what you will work with:
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/High Performance Network Solution/notes.md 3/1512/18/25, 11:41 AM notes.md
+Component Meaning (Simple)
+VPC Private room inside the cloud where your
+machines live
+Subnet Smaller sections inside the room
+Security Group Firewall guarding your machines
+EIP Public phone number for your server
+NAT Gateway Smart translator allowing many servers to
+share Internet
+VPC Peering A private road between two VPC rooms
+DNS A phonebook converting names → IP addresses
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/High Performance Network Solution/notes.md 4/1512/18/25, 11:41 AM notes.md
+🖥
+5. Basic Environment Configuration
+You start with: - vpc-primary - subnet-web - sg-web -
+ecs-web (Discuz! installed, has EIP)
+Your task: - Create subnet-db - Create sg-db - Create RDS
+MySQL - Connect Discuz! to database
+🌱
+Step 1 — Create subnet-db & sg-db
+Why change the source of a security group rule?
+Because: - By default the rule allows access from anywhere\
+But for a database, this is risky\
+To secure it, you only allow access from the web server’s security
+group (sg-web)
+This is like saying:
+“Only my web server is allowed to talk to my database, nothing else!”
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/High Performance Network Solution/notes.md 5/1512/18/25, 11:41 AM notes.md
+🗃
+Step 2 — Create RDS MySQL Instance
+Important points: - Same Region (AP-Singapore) as vpc-primary\
+Must select subnet-db\
+Attach sg-db\
+Use MySQL 5.7\
+The “floating IP” of RDS = private IP inside subnet-db.
+How do you get the RDS floating IP?
+After RDS is created → open the RDS console → Instance Details → Copy
+Private IP.
+🔗
+Step 3 — Connect Discuz! to the RDS
+Database
+During installation: - Database server = private IP of RDS\
+Database password = the one you set in RDS\
+Admin password = Discuz! panel login
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/High Performance Network Solution/notes.md 6/1512/18/25, 11:41 AM notes.md
+If you can log into Discuz! dashboard → success.
+🌍
+6. Accessing Website Using EIP & NAT
+Gateway
+❓
+What is a public NAT gateway?
+A NAT Gateway is like a smart receptionist.
+SNAT = servers inside the VPC access the Internet\
+DNAT = Internet users access your server
+When you use NAT: - You can unbind EIP from ECS - And still allow public
+access using DNAT
+Step 1 — Unbind the EIP
+After unbinding: - Discuz! becomes unreachable\
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/High Performance Network Solution/notes.md 7/1512/18/25, 11:41 AM notes.md
+This shows the ECS-web cannot connect to the Internet without EIP or
+NAT
+Step 2 — Create a Public NAT Gateway
+Use: - vpc-primary - subnet-web
+Step 3 — Configure SNAT
+This allows: - ECS inside subnet-web to reach the Internet using NAT.
+Use the same EIP you unbound earlier.
+Step 4 — Configure DNAT
+This tells NAT:
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/High Performance Network Solution/notes.md 8/1512/18/25, 11:41 AM notes.md
+“When someone on the Internet visits EIP:80, send the request to
+ecs-web:80.”
+Step 5 — Refresh Discuz!
+Discuz! becomes accessible again through NAT.
+🔗
+7. VPC Peering — Private
+Communication Between VPCs
+You need O&M staff to access the site privately.
+So you create: - vpc-om - subnet-om - sg-om - ecs-om
+(O&M jump server)
+Then use VPC Peering to connect:
+vpc-primary ↔ vpc-om
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/High Performance Network Solution/notes.md 9/1512/18/25, 11:41 AM notes.md
+❓
+What to pay attention to during VPC
+Peering?
+CIDR blocks must NOT overlap\
+Both sides must add routes\
+Security groups must allow communication\
+VPCs must be in the same region
+Think of it like:
+Two houses want to build a private road.
+They must ensure: - They don’t draw the road on top of each other\
+Both sides open their gates\
+The road ends exactly at the right gate
+🧭
+8. DNS — Using Names Instead of IPs
+Instead of remembering:
+192.168.1.120
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/High Performance Network Solution/notes.md 10/1512/18/25, 11:41 AM notes.md
+You create:
+www.abc.com
+Using Private DNS: - Only VPC-om can resolve this domain\
+Because the private zone is bound to vpc-om
+❓
+Public vs Private DNS
+Public DNS Private DNS
+Visible to entire Internet Visible only inside your VPC
+Used for public websites Used for internal services
+Managed with domain registrars Managed inside cloud
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/High Performance Network Solution/notes.md 11/1512/18/25, 11:41 AM notes.md
+🧠
+9. Important Clarifications & Extra
+Explanations
+Why do the service subnet and data subnet communicate?
+Because: - They are inside the same VPC - Routes automatically allow
+full communication between subnets
+Think of a VPC like a house and each subnet is a room.
+Rooms can always communicate inside the same house unless you lock doors
+(security groups).
+❗
+FAQs — Very Important Concepts
+Q1: Steps to create VPC Peering
+1. Choose local VPC\
+2. Choose peer VPC\
+3. Accept request (if cross-account)\
+4. Add routes on both sides\
+5. Security groups allow access
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/High Performance Network Solution/notes.md 12/1512/18/25, 11:41 AM notes.md
+Q2: Why Enterprise Router attachment fails sometimes?
+Because: - VPC Peering adds routes manually.\
+Enterprise Router tries to add overlapping default routes.\
+Route conflict → attachment creation fails.
+Fix: - Delete VPC peering before attaching to ER.
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/High Performance Network Solution/notes.md 13/1512/18/25, 11:41 AM notes.md
+🧩
+10. The Big Picture — Architecture
+Summary
+Internet
+|
+EIP
+|
+------------------------------------------------
+| |
+NAT Gateway (SNAT + DNAT) VPC Peering
+| |
+vpc-primary vpc-om (O&M)
+| |
+------------------------- --------------------
+| subnet-web | | subnet-om |
+| ecs-web (Discuz!) | | ecs-om (Jump) |
+------------------------- --------------------
+|
+-------------------------
+| subnet-db |
+| RDS MySQL |
+-------------------------
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/High Performance Network Solution/notes.md 14/1512/18/25, 11:41 AM notes.md
+🎉
+End of Notes
+Master, whenever you read this — even a year later — everything will
+come back clearly.
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/High Performance Network Solution/notes.md 15/1512/18/25, 11:39 AM notes.md
+Building a Highly Elastic Service System on
+Huawei Cloud: A Discuz! Deployment
+Guide
+🎯
+Exercise Overview
+Objective
+Build a distributed, highly elastic service architecture for a Discuz! forum using
+Huawei Cloud services including Auto Scaling, Elastic Load Balance (ELB), and
+Relational Database Service (RDS).
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 1/2212/18/25, 11:39 AM notes.md
+Images
+Key Technologies Used
+Discuz! - Popular open-source forum software
+Auto Scaling (AS) - For automatic scaling of compute and bandwidth resources
+Elastic Load Balance (ELB) - For traffic distribution
+Relational Database Service (RDS) - Managed MySQL database
+Virtual Private Cloud (VPC) - Network isolation
+Image Management Service (IMS) - For creating server templates
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 2/2212/18/25, 11:39 AM notes.md
+📋
+Prerequisites & Setup
+Important Notes Before Starting
+1. Use Preset Lab Environment - Click the Preset Lab button to automatically
+provision infrastructure
+2. Follow Specifications Exactly - Resources may be reclaimed if not purchased
+according to requirements
+3. Use Provided Credentials - Do not use personal Huawei Cloud account
+credentials
+4. View Account Credentials - Click the credentials icon as shown in the tutorial
+Required Knowledge
+Basic understanding of Huawei Cloud infrastructure services
+Familiarity with Linux command line operations
+Fundamental knowledge of web application architecture
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 3/2212/18/25, 11:39 AM notes.md
+🏗
+Phase 1: Basic Environment Configuration
+Step 1: Creating Subnet for Database Layer
+Purpose: Isolate database traffic from web traffic for better security and
+performance.
+Configuration Details:
+VPC: vpc-primary (pre-configured)
+Subnet Name: subnet-db
+CIDR Block: 192.168.2.0/24
+Location: Same region as web subnet
+Why This Matters:
+Separates database and web tiers for security
+Allows independent scaling of network resources
+Follows best practices for multi-tier architecture
+Step 2: Creating Security Group for RDS
+Security Group Configuration:
+Name: sg-db
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 4/2212/18/25, 11:39 AM notes.md
+Template: Fast-add rule
+Inbound Rule: MySQL (3306)
+Source Restriction: Change from 0.0.0.0/0 to the private IP of ecs-web
+Critical Security Consideration:
+Initially allows traffic from anywhere (0.0.0.0/0)
+Must be restricted to only the web server’s private IP
+This prevents unauthorized database access from external sources
+How to Find ECS Private IP:
+1. Navigate to ECS Console
+2. Locate ecs-web instance
+3. Copy the private IP address from instance details
+Step 3: Purchasing RDS Instance
+Database Specifications:
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 5/2212/18/25, 11:39 AM notes.md
+Billing Mode Pay-per-use Region AP-Singapore DB Instance Name rds-web
+DB Engine MySQL 5.7 Instance Type Primary/Standby Storage Type Cloud SSD
+Primary AZ AZ5 Standby AZ AZ3 Time Zone UTC+08:00 Instance Class 2 vCPUs
+Storage Space 40 GB VPC vpc-primary Subnet subnet-db Port 3306
+Security Group sg-db Password Huawei@123#$
+High Availability Design:
+Primary instance in AZ5
+Standby instance in AZ3
+Automatic failover capability
+Data redundancy across availability zones
+Step 4: Installing and Configuring Discuz!
+Installation Process:
+1. Access Discuz! Installer: http://<ECS-Public-IP>:80
+2. System Check: Verify directory permissions and dependencies
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 6/2212/18/25, 11:39 AM notes.md
+3. Installation Type: Select “A new installation Discuz! X (Contain UCenter Server)”
+4. Database Configuration:
+Database Server: RDS instance private IP
+Database Password: Root password set during RDS creation
+Admin Password: Set Discuz! administrator password
+Verification:
+After installation, access http://<ECS-Public-IP>:80 again to confirm Discuz! is
+running properly.
+🔄
+Phase 2: Configuring Elastic Load Balance (ELB)
+Step 1: Unbinding EIP from ECS
+Why Unbind EIP First?
+ECS public IP cannot be directly transferred to ELB
+ELB needs its own public IP to distribute traffic
+Prevents IP address conflicts
+Process:
+1. Navigate to ECS Console
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 7/2212/18/25, 11:39 AM notes.md
+2. Find ecs-web instance
+3. More → Manage Network → Unbind EIP
+4. Confirm unbinding operation
+Step 2: Creating Load Balancer
+ELB Configuration:
+Type Shared load balancer Billing Mode Pay-per-use Region AP-Singapore
+Name elb-web Network Type Public IPv4 VPC vpc-primary Subnet subnet-web
+EIP Use existing
+Listener Configuration:
+Listener Name listener-web Frontend Protocol TCP Frontend Port 80
+Access Control All IP addresses Backend Server Group server_group-web
+Backend Protocol TCP Algorithm Weighted round robin Backend Port 80
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 8/2212/18/25, 11:39 AM notes.md
+Why TCP Instead of HTTP?
+TCP layer load balancing provides better performance
+No need for HTTP header inspection for this use case
+Simpler configuration and lower overhead
+Step 3: Service Verification
+Testing ELB:
+1. Use ELB’s EIP instead of ECS’s old EIP
+2. Access http://<ELB-EIP>:80
+3. Verify Discuz! loads correctly
+Health Check Mechanism:
+ELB continuously checks backend server health
+Sends periodic requests to ensure servers are responsive
+Automatically removes unhealthy servers from rotation
+Note: High frequency of health checks is normal and ensures service reliability
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 9/2212/18/25, 11:39 AM notes.md
+📈
+Phase 3: Auto Scaling for Compute Resources
+Step 1: Creating System Image
+Purpose: Create a template of the configured Discuz! server for cloning.
+Image Creation Process:
+1. Navigate to Image Management Service
+2. Create Image from ecs-web
+3. Name: image-web
+4. Type: System disk image
+5. Region: AP-Singapore
+Why Create an Image?
+Standardizes server configuration
+Enables rapid deployment of identical servers
+Essential for auto-scaling operations
+Step 2: Configuring Auto Scaling Group
+AS Configuration ( as-config-web ):
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 10/2212/18/25, 11:39 AM notes.md
+Billing Mode Pay-per-use CPU Architecture x86 Specifications 2 vCPUs
+Image image-web (private) Disk 40 GiB High I/O Security Group sg-web
+Login Mode Password
+Auto Scaling Group ( as-group-web ):
+Name as-group-web Max Instances 5 Expected Instances 2 Min Instances 1
+VPC vpc-primary Subnet subnet-web Load Balancing elb-web
+Removal Policy Oldest instance first
+Step 3: Creating Scaling Policies
+Scale-Out Policy:
+Policy Name: as-policy-web
+Type: Alarm-triggered
+Trigger: CPU Usage > 70%
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 11/2212/18/25, 11:39 AM notes.md
+Monitoring Interval: 5 minutes
+Consecutive Occurrences: 2 times
+Action: Add 1 instance
+Cooldown: 300 seconds
+Scale-In Policy:
+Trigger: CPU Usage < 30%
+Consecutive Occurrences: 2 times
+Action: Remove 1 instance
+Cooldown: 300 seconds
+Understanding Cooldown Period:
+Prevents rapid oscillation between scale-in and scale-out
+Allows system to stabilize after scaling action
+Configurable based on application needs
+Step 4: Testing Auto Scaling
+Stress Test Procedure:
+1. Scale out an ECS instance manually
+2. Bind EIP to the new instance
+3. Install stress tool: yum -y install stress
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 12/2212/18/25, 11:39 AM notes.md
+4. Generate CPU load: stress --cpu 2 --timeout 900
+5. Monitor CPU usage in Cloud Eye
+6. Wait for scaling policy to trigger (approx. 10 minutes)
+Monitoring Points:
+CPU usage graphs in AS group monitoring
+Instance count changes
+ELB backend server group updates
+🌊
+Phase 4: Bandwidth Auto Scaling
+Creating Bandwidth Scaling Policy
+Configuration:
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 13/2212/18/25, 11:39 AM notes.md
+Policy Name as-policy-web Resource Type EIP Target EIP ELB’s public IP
+Trigger Condition Inbound Bandwidth > 18 Mbps Monitoring Interval 5 minutes
+Consecutive Occurrences 3 times Scaling Action Increase to 30 Mbps
+Cooldown Period 300 seconds
+When to Use Bandwidth Scaling:
+During traffic spikes (marketing campaigns, viral content)
+Scheduled events with predictable traffic patterns
+Seasonal variations in user activity
+ELB and Cloud Eye Integration:
+Must be used together for effective scaling
+ELB provides traffic distribution
+Cloud Eye provides metrics for decision making
+Auto Scaling executes scaling actions based on metrics
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 14/2212/18/25, 11:39 AM notes.md
+🛠
+Phase 5: Advanced Auto Scaling Management
+Step 1: Manual Instance Management
+Adding Instances Manually:
+1. Navigate to AS group instances tab
+2. Click “Add”
+3. Select existing ECS ( ecs-web )
+4. Add to load balancer backend group
+Use Cases for Manual Addition:
+Planned maintenance
+Known traffic spikes (product launches)
+Testing scenarios
+Step 2: Instance Protection
+Enabling Protection:
+Prevents automatic removal during scale-in
+Useful for stateful instances or special configurations
+Note: Health check failures still cause removal
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 15/2212/18/25, 11:39 AM notes.md
+How to Enable:
+1. Locate ECS in AS group instances
+2. Enable “Instance Protection” option
+3. Instance will be excluded from automatic removal
+Step 3: Changing Instance Specifications
+Process:
+1. AS Group → More → Modify AS Configuration
+2. Deselect current specification
+3. Select new specification (e.g., c7n.large.4 )
+4. New instances will use updated specifications
+Considerations:
+Existing instances remain unchanged
+Only new instances created after modification use new specs
+May require image compatibility verification
+Step 4: Notification Configuration
+Setting Up Notifications:
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 16/2212/18/25, 11:39 AM notes.md
+1. Navigate to AS Group → Notifications tab
+2. Click “Add Notification”
+3. Select all scaling events
+4. Create notification topic
+5. Configure email/SMS recipients
+Notification Events:
+Scale-out success/failure
+Scale-in success/failure
+Instance addition/removal
+Health check failures
+❓
+Frequently Asked Questions
+Q1: What is a cooldown period and why is it required?
+Answer: A cooldown period is a waiting time after a scaling action during which no
+new alarm-triggered scaling actions can occur. This prevents:
+Rapid oscillation between scaling states
+Unnecessary scaling costs
+System instability from frequent changes
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 17/2212/18/25, 11:39 AM notes.md
+Key Points:
+Does not affect scheduled or periodic scaling
+Configurable per scaling policy
+Typical values: 300-600 seconds
+Q2: What types of sticky sessions does ELB support?
+Answer: ELB supports three types of session persistence:
+Dedicated ELB 1. Source IP address Shared ELB 1. Source IP address
+2. Load balancer cookie 2. Load balancer cookie
+3. Application cookie
+When to Use Sticky Sessions:
+Shopping carts in e-commerce
+Multi-step forms
+User authentication states
+Any application requiring session continuity
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 18/2212/18/25, 11:39 AM notes.md
+📊
+Architecture Summary
+Final Architecture Components:
+┌─────────────────────────────────────────────────────────────┐
+│ Internet Users │
+└───────────────────────┬─────────────────────────────────────┘
+│
+┌───────▼───────┐
+│ ELB (elb-web) │
+│ Public EIP │
+└───────┬───────┘
+│
+┌───────────────┼───────────────┐
+│ │ │
+┌───────▼───────┐ ┌─────▼─────┐ ┌──────▼──────┐
+│ AS Group │ │ AS Group │ │ Manual │
+│ Instance 1 │ │ Instance 2 │ │ Instance │
+│ (Auto-scaled)│ │ (Auto-scaled)│ │ (ecs-web) │
+└───────┬───────┘ └─────┬─────┘ └──────┬──────┘
+│ │ │
+└───────────────┼───────────────┘
+│
+┌───────▼───────┐
+│ Subnet-web │
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 19/2212/18/25, 11:39 AM notes.md
+│ 192.168.1.0/24│
+└───────┬───────┘
+│
+┌───────▼───────┐
+│ VPC │
+│ vpc-primary │
+└───────┬───────┘
+│
+┌───────▼───────┐
+│ Subnet-db │
+│ 192.168.2.0/24│
+└───────┬───────┘
+│
+┌───────▼───────┐
+│ RDS (rds-web)│
+│ MySQL 5.7 │
+└───────────────┘
+Key Benefits Achieved:
+1. High Availability: Multi-AZ deployment for RDS and potential ECS distribution
+2. Auto-scaling: Both compute and bandwidth scale automatically
+3. Load Distribution: ELB distributes traffic evenly
+4. Cost Optimization: Pay-per-use model with automatic scale-in
+5. Maintainability: Standardized images and automated processes
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 20/2212/18/25, 11:39 AM notes.md
+💡
+Best Practices & Recommendations
+Security Considerations:
+1. Always restrict database access to specific IPs
+2. Use strong passwords for all services
+3. Regularly update system images with security patches
+4. Monitor access logs for unusual patterns
+Performance Optimization:
+1. Set appropriate scaling thresholds based on actual usage patterns
+2. Use connection pooling for database access
+3. Implement caching where appropriate
+4. Regularly review and adjust scaling policies
+Cost Management:
+1. Set appropriate minimum and maximum instance limits
+2. Monitor unused resources
+3. Use pay-per-use billing for unpredictable workloads
+4. Consider reserved instances for baseline workloads
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 21/2212/18/25, 11:39 AM notes.md
+Monitoring and Maintenance:
+1. Set up comprehensive Cloud Eye alerts
+2. Regular backup of RDS data
+3. Periodic testing of failover scenarios
+4. Document all configurations and changes
+🔮
+Future Enhancements
+Consider adding these components for a more robust architecture:
+1. Content Delivery Network (CDN) for static assets
+2. Object Storage Service (OBS) for user uploads
+3. Distributed Cache Service (DCS) for session storage
+4. Web Application Firewall (WAF) for security
+5. API Gateway for microservices architecture
+This guide provides comprehensive documentation of building a highly elastic service
+system on Huawei Cloud. Save this document for future reference, troubleshooting, and
+architecture planning.
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly Elastic Service System/notes.md 22/2212/18/25, 11:34 AM notes.md#images
+That’s a fun challenge! Here is your lab guide, but with all the technical explanations
+turned into simple, child-friendly analogies, keeping the structure the same.
+☁
+Highly Reliable Database Solution Lab
+Guide (Huawei Cloud)
+📌
+Overall Goal
+This whole exercise is like building a super-strong, super-fast toy city for your
+Discuz! toys to play in!
+1. RDS (Relational Database Service): Making sure your toys are kept safe and
+sound in their main toy box.
+2. DRS (Data Replication Service): Making an emergency backup toy box just in
+case!
+3. DCS (Distributed Cache Service - Redis): Building a special, fast ticket booth to
+get toys quickly.
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly reliable database solution/notes.md#images 1/1112/18/25, 11:34 AM notes.md#images
+Images
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly reliable database solution/notes.md#images 2/1112/18/25, 11:34 AM notes.md#images
+I. Basic Environment Configuration (The Foundation)
+This part is like drawing the map and building the first house for your toy city.
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly reliable database solution/notes.md#images 3/1112/18/25, 11:34 AM notes.md#images
+🛠
+Step 1: Creating Network Resources (Special Roads and Guards)
+Create Subnet ( subnet-db ) A dedicated area on the map.
+We are building a special, quiet road just for the important Toy Boxes (Databases).
+This keeps them away from the busy highway where the Web Servers drive.
+Create Security Group ( sg-db ) A fence with a gate.
+We are putting a security fence around the database road. This fence has a special
+guard who checks everyone who wants to enter.
+Modify Inbound Rule (Source: sg-web ) Giving the Web Server car a special pass.
+The fence guard is told: “Only let the cars coming from the Web Server’s driveway (
+sg-web ) pass through this gate to talk to the toy boxes!” This keeps the important
+data safe from strangers.
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly reliable database solution/notes.md#images 4/1112/18/25, 11:34 AM notes.md#images
+💾
+Step 2: Buying the Primary RDS Instance (The Main Toy Box)
+Name rds-primary The first and most important toy box.
+Type Primary/Standby
+This is like buying two toy boxes and putting them in two different rooms right
+from the start. They will always match!
+AZs Primary AZ1, Standby AZ5
+Key for HA: We put them in two different rooms (AZ1 and AZ5). If a meteor hits room
+1, we still have the toy box in room 5!
+Network vpc-primary ** ** subnet-db **
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly reliable database solution/notes.md#images 5/1112/18/25, 11:34 AM notes.md#images
+🌐
+Step 3: Installing Discuz! and Connecting to RDS (Moving the
+Toys In)
+Access Website Use the web car’s address.
+We drive to the new website (the toy store) to set it up.
+Configure Database Address of rds-primary
+We tell the website: “Every single time you need to save a toy or remember
+something, you MUST use the address of this Main Toy Box!”
+II. Highly Reliable Database Design
+This part is about making sure the toy city never has a problem and can serve lots of
+friends.
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly reliable database solution/notes.md#images 6/1112/18/25, 11:34 AM notes.md#images
+💾
+Step 1: Creating a Standby RDS Instance (The Emergency Toy
+Box)
+Create rds-standby Creating the second toy box.
+We are building the Backup Toy Box. It’s there just in case the main one breaks, but
+for now, it’s empty.
+Floating IP Address Record this IP! This is the address of the empty backup box.
+🔄
+Step 2: Creating a DRS Task for Synchronization (The Magic Copy
+Machine)
+What is DRS? This is the Magic Copy Machine that moves things between the main
+box and the emergency box.
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly reliable database solution/notes.md#images 7/1112/18/25, 11:34 AM notes.md#images
+Migration Type Full + Incremental
+Best for Toys: First, copy all the toys we have now ( Full ). Then, keep watching the
+main box and instantly copy any NEW toys put in ( Incremental ). This makes sure the
+backup box is always perfect!
+Source/Destination rds-primary to rds-standby
+→
+The flow of the magic copy: Main Box Emergency Box.
+Configure Step Confirm permissions.
+We tell the Magic Copy Machine: “Yes, you are allowed to look inside both boxes and
+move things!”
+📈
+Step 3: Creating a Read Replica (The Photocopies for Friends)
+Why a Read Replica? To stop friends from fighting over the main toy box.
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly reliable database solution/notes.md#images 8/1112/18/25, 11:34 AM notes.md#images
+Creation Method Create Read Replica from rds-primary .
+We tell the Primary Toy Box to make a special Photocopy Station!
+Result New instance replica-discuz .
+Now, when friends want to look at the toys (read), they can use the photocopy
+station. The Main Toy Box is only used for putting toys away (writes). This makes
+everything faster!
+III. Cache Database Design
+This part is about adding a super-speed machine to the toy city.
+🚀
+Step 1: Creating a DCS Instance (The Fast-Pass Ticket Booth)
+What is DCS? This is Huawei Cloud’s Fast-Pass Line for getting information. It stores
+data in super-fast memory (RAM), not on a slow hard drive.
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly reliable database solution/notes.md#images 9/1112/18/25, 11:34 AM notes.md#images
+Cache Engine Redis The name of the special Fast-Pass technology.
+Instance Type Master/Standby
+Even the Fast-Pass Booth has a backup! If the main booth breaks, the backup one
+instantly opens.
+IP Address Record this IP! This is the address of the Fast-Pass Booth.
+⚙
+Step 2: Configuring the Cache Service for Discuz! (Building the
+Fast-Pass Gate)
+This step is where we tell the website how to use the new Fast-Pass Booth!
+1. Log in to ecs-web : We remotely control the Web Server car.
+2. Install PHP Redis Plugin:
+yum install php-redis -y
+This is like installing a special walkie-talkie so the Web Server car can talk to the Fast-
+Pass Booth.
+3. Restart Web Service:
+systemctl restart httpd
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly reliable database solution/notes.md#images 10/1112/18/25, 11:34 AM notes.md#images
+We turn the car off and on so it can start using the new walkie-talkie.
+4. Edit Configuration File:
+vi /var/www/html/config/config_global.php
+We open the website’s instruction book.
+5. Configure CONFIG MEMORY :
+We write the Fast-Pass Booth’s address into the instruction book.
+Now, before the website goes to the slow Toy Box, it checks the Fast-Pass Booth
+first. If the information is there, it’s super fast!
+file:///home/shahzan/Work/Huawei/Notes/HCCDP Solutions Architect/Highly reliable database solution/notes.md#images 11/1112/18/25, 11:43 AM notes.md
+Huawei HCCDA - Cloud Native
+Lab 1: Complete Container
+🐳
+Guide
+1. What Are Containers? (The Simple
+Explanation)
+Think of containers like lunch boxes:
+Each lunch box contains a complete meal (your app + all its
+dependencies)
+They’re portable - work the same on your laptop, your
+friend’s computer, or in the cloud
+They’re isolated - if one lunch box spills, it doesn’t affect the
+others
+They’re lightweight - unlike virtual machines that need a
+whole operating system each
+Why we love containers:
+🎉
+“It works on my machine” problem solved!
+Easy to share and deploy applications
+Consistent environment from development to production
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 1 - Getting started with basic container operations/notes.md 1/1512/18/25, 11:43 AM notes.md
+2. Getting Started: Running Your First
+Container
+Starting a Web Server Container
+docker run -d -p 80:80 httpd
+Let’s break this down like a recipe:
+docker run = “Hey Docker, please make me a new
+container and start it!”
+-d = “Run it in detached mode” (like starting a background
+music player)
+-p 80:80 = “Connect port 80 on my computer to port 80 in
+the container”
+First 80 = your computer’s door number
+Second 80 = container’s door number
+httpd = The Apache web server software package
+What actually happens behind the scenes:
+1. Docker checks if you have the httpd image locally
+2. If not, it downloads it from Docker Hub (like an app store
+for containers)
+3. Creates a new container from that image
+4. Starts the Apache web server inside the container
+5. Maps port 80 so you can access it via web browser
+Try it! Open your browser and go to http://localhost - you
+should see “It works!”
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 1 - Getting started with basic container operations/notes.md 2/1512/18/25, 11:43 AM notes.md
+Useful Inspection Commands
+# See what containers are running
+docker container ls
+Output shows:
+CONTAINER ID: Unique ID for each container (like a serial
+number)
+IMAGE: What software it’s running
+STATUS: Is it running or stopped?
+PORTS: How ports are mapped
+# See what software packages (images) you have
+downloaded
+docker image ls
+3. Container Management (The Remote
+Control)
+Basic Lifecycle Commands
+# Stop a container (graceful shutdown)
+docker stop container-id
+# Start a stopped container
+docker start container-id
+# Remove a container permanently
+docker rm container-id
+Pro Tip: You can use the first few characters of the container ID
+instead of the full ID:
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 1 - Getting started with basic container operations/notes.md 3/1512/18/25, 11:43 AM notes.md
+docker stop a1b2 # instead of docker stop
+a1b2c3d4e5f6
+Why Stop vs Remove?
+Stop = Like putting your computer to sleep (you can wake it
+up later)
+Remove = Like throwing your computer in the trash (it’s
+gone forever!)
+4. Exploring Inside Containers (The
+Adventure Begins!)
+Downloading Different Operating Systems
+# Download CentOS Linux (a specific version)
+docker pull centos:centos7
+# Download Ubuntu Linux (latest version)
+docker pull ubuntu
+# Download a specific Ubuntu version
+docker pull ubuntu:24.04
+Think of it like: Downloading different “flavors” of Linux to
+experiment with!
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 1 - Getting started with basic container operations/notes.md 4/1512/18/25, 11:43 AM notes.md
+Going Inside a Container
+# Start a CentOS container in background
+docker run -t -d centos:centos7
+# Get inside the running container
+docker exec -it container-id bash
+What do these flags mean?
+-i = “Keep the input open” (so you can type commands)
+-t = “Give me a virtual terminal” (so you see the output
+nicely)
+bash = “Start the bash shell” (the command interpreter)
+Once inside, you can:
+Run commands like ls , pwd , whoami
+Install software with yum install vim (on CentOS)
+Create files and folders
+Type exit to leave when done
+Important: Changes you make inside disappear when the
+container is deleted! (Unless you save them)
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 1 - Getting started with basic container operations/notes.md 5/1512/18/25, 11:43 AM notes.md
+5. Saving Your Changes (Creating Custom
+Images)
+The Manual Way: Docker Commit
+# After making changes inside a container (like
+installing vim)
+docker commit container-id centos-vim
+What this does:
+Takes a “snapshot” of your current container
+Creates a new image called centos-vim
+This new image will always have vim installed when you
+create containers from it
+Analogy: Like taking a photo of your perfectly configured
+computer to make identical copies later.
+The Better Way: Dockerfile (Recipe Files)
+docker build -t httpd-centos -f dockerfile /root
+Breakdown:
+docker build = “Build an image following a recipe”
+-t httpd-centos = “Tag/name the resulting image as httpd-
+centos”
+-f dockerfile = “Use this file as the recipe”
+/root = “Build context” (files available during build)
+Sample Dockerfile content:
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 1 - Getting started with basic container operations/notes.md 6/1512/18/25, 11:43 AM notes.md
+FROM centos:centos7
+RUN yum install -y httpd
+COPY my-website/ /var/www/html/
+CMD ["httpd", "-D", "FOREGROUND"]
+Why Dockerfile is better than commit:
+Repeatable and consistent
+Version controllable (you can track changes)
+Easy to share and automate
+6. Your Private Container Registry
+(Company App Store)
+Setting Up Your Registry
+docker run -d -p 5000:5000 registry
+What this does:
+Starts a container that acts as your private image storage
+server
+Port 5000 is the standard port for Docker registries
+Now you have your own “private app store” for company
+images
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 1 - Getting started with basic container operations/notes.md 7/1512/18/25, 11:43 AM notes.md
+Storing Your Custom Images
+# Step 1: Tag your image for the registry
+docker tag httpd-centos localhost:5000/http:V1
+# Step 2: Push to the registry
+docker push localhost:5000/http:V1
+Tagging explained:
+httpd-centos = Your local image name
+localhost:5000 = Address of your registry
+http = Repository name in the registry
+V1 = Version tag (like “version 1”)
+Using Images from Your Registry
+# Remove local copy
+docker rmi localhost:5000/http:V1
+# Download from your registry
+docker pull localhost:5000/http:V1
+Real-world use: Companies use this to store their custom
+applications securely, rather than putting them on public
+Docker Hub.
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 1 - Getting started with basic container operations/notes.md 8/1512/18/25, 11:43 AM notes.md
+7. Resource Management (Preventing
+Greedy Containers)
+Memory Limits
+# Limit to 200MB RAM
+docker run -it -m 200M polinux/stress stress --vm 1
+--vm-bytes 150M
+What happens:
+Container can use maximum 200MB memory
+The stress tool tries to use 150MB
+If it tries to use more than 200MB, Docker kills the
+container
+Memory + Swap Limits
+docker run -it -m 300M --memory-swap=400M
+polinux/stress stress --vm 2 --vm-bytes 100M
+Memory math:
+RAM limit: 300MB
+Total memory (RAM + Swap): 400MB
+Therefore, Swap = 400MB - 300MB = 100MB
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 1 - Getting started with basic container operations/notes.md 9/1512/18/25, 11:43 AM notes.md
+CPU Limits
+# Use only 60% of one CPU core
+docker run -it --cpus=0.6 polinux/stress stress --
+vm 1
+# Relative CPU sharing (when multiple containers
+compete)
+docker run -itd --cpu-shares 2048 polinux/stress
+stress --cpu 1
+CPU shares explained:
+Default is 1024 shares per container
+Container with 2048 shares gets twice as much CPU time as
+one with 1024
+Only matters when CPU is overloaded
+8. Container Networking
+Network Modes
+# Use host's network directly (fastest, less
+secure)
+docker run -itd --network=host centos
+# Use default bridge (isolated, more secure)
+docker run -itd --network=bridge centos
+Bridge network explained:
+Docker creates a virtual network switch
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 1 - Getting started with basic container operations/notes.md 10/1512/18/25, 11:43 AM notes.md
+Each container gets its own IP address on this virtual
+network
+Containers can talk to each other but are isolated from the
+host
+Creating Custom Networks
+docker network create --driver bridge --subnet
+173.18.0.0/16 --gateway 173.18.0.1 servicebridge01
+Why create custom networks?
+Group related containers together
+Better organization and security
+Automatic DNS resolution between containers on same
+network
+9. Storage and Data Persistence
+Volume Mounts (Sharing Folders)
+docker run -d -p 80:80 -v
+/home/container/htdocs/:/usr/local/apache2/htdocs/
+httpd
+What this does:
+Connects /home/container/htdocs/ on your computer to
+/usr/local/apache2/htdocs/ in the container
+Changes in either location are instantly visible in both
+Your data survives even if the container is deleted
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 1 - Getting started with basic container operations/notes.md 11/1512/18/25, 11:43 AM notes.md
+Use cases:
+Website files that you edit frequently
+Database files you want to backup
+Configuration files
+10. Monitoring and Logs
+Real-time Monitoring
+docker stats
+Shows live CPU, memory, and network usage for all containers
+- like Task Manager for Docker!
+Viewing Logs
+journalctl -b CONTAINER_NAME=container-name
+Alternative methods:
+# View logs for a specific container
+docker logs container-id
+# Follow logs in real-time
+docker logs -f container-id
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 1 - Getting started with basic container operations/notes.md 12/1512/18/25, 11:43 AM notes.md
+Key Technology Concepts
+Cgroups (Control Groups)
+What: Linux feature that limits resource usage
+Why: Prevents one container from hogging all
+CPU/memory
+Where: /sys/fs/cgroup/cpu/docker/container-id/
+Namespaces
+What: Linux feature that provides isolation
+Types: PID, Network, Mount, IPC, UTS, User namespaces
+Result: Each container thinks it’s alone on the system
+Common Pitfalls & Best Practices
+Don’t Forget:
+1. Data in containers is temporary - use volumes for
+important data
+2. Stop containers before removing them
+3. Use descriptive names and tags for images
+4. Set resource limits in production
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 1 - Getting started with basic container operations/notes.md 13/1512/18/25, 11:43 AM notes.md
+Useful Aliases for Your Shell:
+# Add to your ~/.bashrc file
+alias dps='docker ps --format "table
+{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"'
+alias dimg='docker images'
+alias dstop='docker stop $(docker ps -aq)'
+alias drm='docker rm $(docker ps -aq)'
+Quick Reference Commands:
+# See running containers
+docker ps
+# See all containers (including stopped)
+docker ps -a
+# Remove all stopped containers
+docker container prune
+# Remove unused images
+docker image prune
+# See disk usage
+docker system df
+Real-World Scenarios
+Development Environment:
+# Perfect setup for web development
+docker run -d -p 80:80 -v $(pwd):/var/www/html
+httpd
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 1 - Getting started with basic container operations/notes.md 14/1512/18/25, 11:43 AM notes.md
+Database with Persistent Storage:
+# MySQL with data that survives container restarts
+docker run -d -p 3306:3306 -v
+/data/mysql:/var/lib/mysql mysql
+Multi-Container Application:
+# Web app + database talking to each other
+docker run -d --name database mysql
+docker run -d --name website -p 80:80 --link
+database httpd
+Remember: This is just the beginning! Containers are the
+foundation for Kubernetes and modern cloud applications.
+🚀
+Practice these commands until they become second nature!
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 1 - Getting started with basic container operations/notes.md 15/1512/18/25, 11:45 AM notes.md
+Kubernetes Lab Notes:
+Networking & Persistent
+🌟
+Storage
+Table of Contents
+1. Lab Setup
+2. Pod & Node Networking
+3. Service Discovery
+4. Kubernetes Storage
+5. StatefulSets
+🏢
+1. Lab Setup
+What We Have
+CCE Cluster = A whole Kubernetes city
+Node = An apartment building in the city
+ECS = Your house outside the city
+🎮
+Installing kubectl - The City Remote Control
+Q) Why install kubectl in ECS (your house) and not on the
+Node (apartment building)?
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 1/2212/18/25, 11:45 AM notes.md
+It’s safer to control the city from your house than from
+inside an apartment building
+More convenient - you can manage everything from one
+place
+How to Get Your Remote Control Working:
+1. Install kubectl on your computer
+2. Get the special config file (like pairing your remote)
+3. Put it in the right place: ~/.kube/config
+4. Test it: kubectl get nodes - this should show your buildings
+# This is like testing your remote control
+kubectl get nodes
+Sample Output:
+NAME STATUS ROLES AGE VERSION
+cce01-node1 Ready <none> 15d v1.25.0
+cce01-node2 Ready <none> 15d v1.25.0
+📞
+2. Pod & Node Networking
+🏪
+What’s a Pod?
+A Pod is like a single shop in our city. Each shop has:
+Its own phone number (IP address)
+Can be temporary (opens and closes)
+Q) What do you mean by ephemeral?
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 2/2212/18/25, 11:45 AM notes.md
+“Ephemeral” means temporary - like a pop-up shop
+Pods can close and reopen with new phone numbers
+This is why we need Services (phone books) later!
+Let’s Test Communication
+Step 1: Open an Nginx Shop
+kubectl run nginx --image=nginx --port=80
+Step 2: Find Its Phone Number
+kubectl get pods -o wide
+Sample Output:
+NAME READY STATUS RESTARTS AGE IP
+NODE
+nginx 1/1 Running 0 10s 10.244.1.2
+cce01-node1
+Phone number = 10.244.1.2
+Step 3: Call the Shop
+curl 10.244.1.2
+Q) When we write curl <IP> , what does it check?
+📞
+curl is like making a phone call
+If someone answers (server works), you get the website
+If no one answers, you get an error
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 3/2212/18/25, 11:45 AM notes.md
+Q) What was the purpose of doing all this?
+To prove that every shop (Pod) gets its own phone number
+(IP)
+And that everyone in the city can call each other directly!
+Testing Between Shops
+🛠
+What’s Busybox?
+Q) What is a busybox?
+Busybox is like a Swiss Army knife - lots of small useful
+tools
+Perfect for testing because it’s simple and has everything
+we need
+Create a Busybox Shop and Call Nginx:
+# Enter the busybox shop
+kubectl run -it busybox --image=busybox -- /bin/sh
+# Inside busybox, call nginx
+telnet 10.244.1.2 80
+Q) What did we achieve by doing this?
+Proved that shops can call each other directly!
+No need for special phone operators
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 4/2212/18/25, 11:45 AM notes.md
+📖
+3. Service Discovery
+😟
+The Big Problem
+Shops (Pods) keep changing their phone numbers! How do you
+call “Bob’s Pizza” if their number changes daily?
+🎯
+The Solution: Services!
+A Service is like a city phone book - it gives permanent
+numbers to groups of shops.
+Creating Multiple Shops (Deployment)
+nginx-deploy.yaml:
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 5/2212/18/25, 11:45 AM notes.md
+apiVersion: apps/v1 # This tells Kubernetes what
+"language" we're speaking
+kind: Deployment # We're creating a shop
+manager
+metadata:
+name: nginx # The manager's name
+spec:
+replicas: 3 # Create 3 identical shops
+selector: # The manager looks for shops
+with this tag
+matchLabels:
+app: nginx
+template: # This is the shop blueprint
+metadata:
+labels:
+app: nginx # All shops get this tag
+spec:
+containers:
+- name: nginx
+image: nginx
+ports:
+- containerPort: 80
+Q) What does selector mean?
+It’s how the manager finds “his” shops
+“Find all shops with tag app=nginx ”
+Create the Shops:
+kubectl apply -f nginx-deploy.yaml
+kubectl get deployment
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 6/2212/18/25, 11:45 AM notes.md
+Creating the Phone Book (Service)
+nginx-service.yaml:
+apiVersion: v1
+kind: Service # This is a phone book
+metadata:
+name: nginx-svc # Phone book name
+spec:
+selector:
+app: nginx # List all shops with this tag
+ports:
+- protocol: TCP
+port: 8080 # Phone book number
+targetPort: 80 # Actual shop number
+Q) What does selector: app: nginx mean in the Service?
+“Put all shops with tag app=nginx in this phone book”
+Create the Phone Book:
+kubectl apply -f nginx-service.yaml
+kubectl get service
+Sample Output:
+NAME TYPE CLUSTER-IP EXTERNAL-IP
+PORT(S) AGE
+nginx-svc ClusterIP 10.105.32.105 <none>
+8080/TCP 5m
+Permanent phone number = 10.105.32.105:8080
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 7/2212/18/25, 11:45 AM notes.md
+Check Who’s in the Phone Book:
+kubectl get endpoints
+Sample Output:
+nginx-svc 10.244.1.2:80,10.244.1.3:80,10.244.2.5:80
+This shows the 3 actual shops behind the phone number!
+🌍
+Making Your Shop Public
+Regular Service = Internal company phone (only inside office)
+NodePort Service = Public customer service line (anyone can
+call)
+nginx-expose.yaml:
+apiVersion: v1
+kind: Service
+metadata:
+name: nginx-svc
+spec:
+type: NodePort # Make it PUBLIC!
+selector:
+app: nginx
+ports:
+- protocol: TCP
+port: 8080
+targetPort: 80
+nodePort: 30144 # Public number
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 8/2212/18/25, 11:45 AM notes.md
+Q) What’s the difference between normal service and
+expose.yaml?
+Normal: Only people in the city can call
+NodePort: Anyone in the world can call!
+Test the Public Number:
+kubectl apply -f nginx-expose.yaml
+curl <ANY-NODE-IP>:30144
+👥
+Testing from Another Pod
+Q) What do you mean by “using a service to access
+workload from another pod”?
+Let’s create a customer and have them order pizza!
+Step 1: Create a Customer
+# client.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+name: clientpod
+spec:
+containers:
+- name: clientpod
+image: busybox:1.28.3
+args:
+- /bin/sh
+- -c
+- sleep 30000 # Stay alive for testing
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 9/2212/18/25, 11:45 AM notes.md
+Step 2: Go Inside the Customer’s Head
+kubectl apply -f client.yaml
+kubectl exec -it clientpod -- /bin/sh
+Step 3: Look Up Pizza Shop in Phone Book
+nslookup nginx-svc
+This finds the permanent phone number
+Step 4: Call the Pizza Shop
+wget -q -O - nginx-svc:8080
+🍕
+This successfully orders pizza!
+The Magic: Even if actual pizza shops change, the phone book
+number stays the same!
+📦
+4. Kubernetes Storage
+🛒
+emptyDir = Shopping Cart
+What it is:
+Temporary storage while shopping
+Gets emptied when you leave (pod dies)
+empty-pod.yaml:
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 10/2212/18/25, 11:45 AM notes.md
+apiVersion: v1
+kind: Pod
+metadata:
+name: em
+spec:
+containers:
+- image: ubuntu
+name: test-container
+volumeMounts:
+- mountPath: /cache # Where to put cart in
+shop
+name: cache-volume
+args:
+- /bin/sh
+- -c
+- sleep 30000
+volumes:
+- name: cache-volume
+emptyDir: {} # This is the shopping cart
+Test it:
+kubectl apply -f empty-pod.yaml
+kubectl exec -it em -- /bin/bash
+# Inside the container:
+echo "Hello from lab!" > /cache/hello.file
+Q) Why cat > hello.file<<EOF ?
+It’s a quick way to create a file with content
+Like writing a note and putting it in your cart
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 11/2212/18/25, 11:45 AM notes.md
+🏗
+hostPath = Writing on the Wall
+What it is:
+Store data directly on the building
+Stays even if your shop closes
+Problem: If shop moves to new building, writing isn’t there!
+hostPath-pod.yaml:
+volumes:
+- name: hp-volume
+hostPath:
+path: /testdir # Write on this wall
+type: Directory
+🗄
+PV & PVC = Renting Storage Units
+PV (PersistentVolume) = Actual storage units in city
+PVC (PersistentVolumeClaim) = “I want to rent a storage
+unit!”
+Check Available Units:
+kubectl get pv # Show available storage units
+kubectl get pvc # Show rental requests
+Q) What’s the difference between kubectl get pv and
+kubectl get pvc ?
+get pv = See all storage units in city
+get pvc = See who wants to rent units
+Using a Storage Unit in Your Shop:
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 12/2212/18/25, 11:45 AM notes.md
+volumes:
+- name: pvc-volume
+persistentVolumeClaim:
+claimName: cce-efs-import-mypvc # Your
+storage unit
+Best part: Data survives even if shop closes and reopens!
+StatefulSets Explained Like
+🏦
+Never Before!
+The Problem: Why Food Trucks Don’t Work
+🚚
+for Banks
+Imagine you have 3 food trucks (Regular Pods):
+Taco Truck #1
+Taco Truck #2
+Taco Truck #3
+What’s the problem?
+They’re all identical - same tacos, same menu
+If Taco Truck #1 breaks down, a new identical one replaces
+it
+Customers don’t care which truck they get tacos from
+Perfect for tacos, TERRIBLE for banks!
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 13/2212/18/25, 11:45 AM notes.md
+🏢
+What ARE StatefulSets?
+StatefulSets are for businesses that NEED to remember
+things:
+Think of 3 bank branches:
+🏦
+Bank Branch #1 (Downtown)
+🏦
+Bank Branch #2 (Uptown)
+🏦
+Bank Branch #3 (Suburbs)
+Each branch is SPECIAL:
+✅
+Unique name that NEVER changes
+✅
+Own vault (storage) that NEVER mixes with others
+✅
+Opens/closes in specific order (very organized!)
+Real examples:
+Databases (MySQL, PostgreSQL)
+Where each instance has DIFFERENT data
+Applications that need to remember who they are
+Headless Service = Direct Employee Phone
+📞
+Lines
+Regular Service (Main Company Number)
+📞
+Call: 1-800-COMPANY
+👋
+You get: ANY available customer service rep
+🤷
+You don't care WHO answers
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 14/2212/18/25, 11:45 AM notes.md
+Headless Service (Direct Extensions)
+📞
+Call: Bob's direct line (x101)
+👋
+You get: BOB specifically
+📞
+Call: Alice's direct line (x102)
+👋
+You get: ALICE specifically
+Why do banks need this?
+You need to talk to Bank Manager Bob specifically
+You need to talk to Loan Officer Alice specifically
+Each has different responsibilities and information
+The Magic File:
+apiVersion: v1
+kind: Service
+metadata:
+name: headless
+spec:
+clusterIP: None # ⭐ THIS makes it HEADLESS!
+selector:
+app: tomcat
+🏦
+Creating Our Organized Bank System
+Our Bank Blueprint:
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 15/2212/18/25, 11:45 AM notes.md
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+name: tomcat-statefulset
+spec:
+serviceName: tomcat-headless # Use direct phone
+lines
+replicas: 3 # Create 3 bank
+branches
+volumeClaimTemplates: # ⭐ Each branch
+gets OWN vault!
+- metadata:
+name: www-storage
+spec:
+resources:
+requests:
+storage: 5Gi
+What Gets Created:
+tomcat-statefulset-0 www-storage-tomcat-statefulset-0
+tomcat-statefulset-0.tomcat-headless...
+tomcat-statefulset-1 www-storage-tomcat-statefulset-1
+tomcat-statefulset-1.tomcat-headless...
+tomcat-statefulset-2 www-storage-tomcat-statefulset-2
+tomcat-statefulset-2.tomcat-headless...
+Key Point: Each branch has its OWN storage that never gets
+mixed up with others!
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 16/2212/18/25, 11:45 AM notes.md
+✨
+The MAGIC of StatefulSets
+🔥
+What if Disaster Strikes?
+Bank Branch #1 burns down!
+kubectl delete pod tomcat-statefulset-0
+kubectl get pod
+The MAGIC Happens:
+1. Same Name: New branch opens as tomcat-statefulset-0
+(NOT a random name!)
+2. Same Vault: Gets back the EXACT same vault:
+www-storage-tomcat-statefulset-0
+💰
+3. All Money Safe: All customer data and money is STILL
+THERE!
+This is IMPOSSIBLE with regular food trucks!
+Food Truck vs Bank Branch:
+Truck #1 breaks New truck with RANDOM name
+New branch with SAME name
+Storage Loses all ingredients Keeps ALL customer money
+Identity Just another taco truck Still Bank Branch #1
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 17/2212/18/25, 11:45 AM notes.md
+📞
+Testing Our Direct Phone System
+Step 1: Create a Phone Tester
+# Create a special phone book tester
+kubectl run dnsutils --image=tutum/dnsutils --
+command -- sleep infinity
+Step 2: Test the Direct Lines
+# Look up all the direct phone numbers
+kubectl exec dnsutils -- nslookup headless
+What you’ll see:
+🏦
+tomcat-statefulset-0.tomcat-headless... → 10.244.1.10
+🏦
+tomcat-statefulset-1.tomcat-headless... → 10.244.1.11
+🏦
+tomcat-statefulset-2.tomcat-headless... → 10.244.1.12
+Now you can call each branch DIRECTLY!
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 18/2212/18/25, 11:45 AM notes.md
+🎯
+Real-World Examples
+When to Use StatefulSets:
+Database Cluster Each database has different data
+Message Queue Each node has different messages
+Cache Cluster Each instance has different cached data
+File Storage Each pod manages different files
+When to Use Regular Deployments:
+Web Servers All serve same website
+API Servers All handle same requests
+Microservices All provide same service
+🎪
+Simple Summary
+🚚
+Food Trucks (Regular Pods)
+All identical
+Interchangeable
+Lose everything if replaced
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 19/2212/18/25, 11:45 AM notes.md
+Good for: Websites, APIs, stateless apps
+🏦
+Bank Branches (StatefulSets)
+Each is unique
+Keep their identity
+Preserve their data
+Good for: Databases, queues, stateful apps
+The Golden Rule:
+Use StatefulSets when your application needs to
+remember who it is and what data it has!
+❓
+Quick Test
+Question: Should you use StatefulSet for a MySQL database
+cluster?
+✅
+Answer: YES! Each MySQL instance has different data and
+needs to keep its identity!
+Question: Should you use StatefulSet for a website serving
+static pages?
+❌
+Answer: NO! All web servers are identical and
+interchangeable!
+The beauty of StatefulSets is that they handle all the complexity
+of managing stateful applications while keeping everything
+🎉
+organized and reliable!
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 20/2212/18/25, 11:45 AM notes.md
+🎯
+Quick Summary Cheat Sheet
+Pod Temporary shop Pop-up store
+Service Permanent phone book Company phone number
+NodePort Public phone number Customer service line
+emptyDir Shopping cart Temporary storage
+PV/PVC Storage unit rental Long-term storage
+Deployment Interchangeable shops Food trucks
+StatefulSet Organized branches Bank branches
+Headless Service Direct extensions Employee direct lines
+💡
+Key Takeaways
+1. Pods are temporary - they come and go with new IPs
+2. Services are permanent - they provide stable access
+points
+3. Storage choices matter - temporary vs permanent vs
+shared
+4. StatefulSets keep identity - crucial for databases
+5. Kubernetes manages complexity - you just describe what
+you want!
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 21/2212/18/25, 11:45 AM notes.md
+The beauty of Kubernetes is that it handles all the complicated
+stuff behind the scenes. You just describe your city, and
+🎉
+Kubernetes builds and manages it for you!
+Remember: Whether you’re running a simple website or a
+complex database system, Kubernetes has the right tools for
+the job. Start simple, understand the basics, and gradually
+🚀
+work your way up to more advanced concepts!
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 3 - Exercise on kubernetes network and persistant storage/notes.md 22/2212/18/25, 11:45 AM notes.md
+Of course! Let’s transform your lab notes into a super detailed
+and easy-to-understand guide. We’ll break down every step,
+explain the “why” behind it, and answer all your questions in
+simple language.
+Your Ultimate Guide to the Weather Forecast
+Application Lab
+Imagine we’re building a small online weather website. This
+website isn’t just one big program; it’s made of four smaller,
+specialized programs (microservices) that work together:
+1. Frontend: The website you actually see and click on in your
+browser.
+2. Advertisement: A service that decides which ads to show
+you.
+3. Forecast: The brain that calculates the weather prediction.
+4. Recommendation: A service that suggests what you
+should wear or do based on the weather (e.g., “carry an
+umbrella”).
+To manage these programs easily, we package each one into a
+Docker Image (like a sealed box containing the program and
+everything it needs to run). We then run these images as
+Docker Containers (an active, running instance of the image).
+Phase 1: Preparing Our Tools (Docker)
+Purpose: We need a tool to build and run our software “boxes”
+(containers). Docker is that tool. We install it on our cloud
+server (ECS).
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 4 - Cloud native application deployment using CCE/notes.md 1/1112/18/25, 11:45 AM notes.md
+yum install -y docker : This is like using an app store ( yum
+) to download and install the Docker software onto our
+server.
+systemctl start docker : This command starts the Docker
+“engine,” so it’s running and ready to use.
+systemctl enable docker : This tells the server to
+automatically start Docker every time the server reboots, so
+we don’t have to manually start it again.
+docker version : This is a quick check to see if we installed
+Docker correctly. It’s like opening an app to make sure it
+doesn’t crash on startup.
+Phase 2: Building Our Software “Boxes” (Docker
+Images)
+Purpose: We need to create the Docker images for our
+microservices so we can run them anywhere.
+A) Building the Forecast Image from Source Code
+cd /root : We navigate to the main folder ( root ) on our
+server.
+wget weatherforcast-master.tar : We download a
+compressed file from the internet that contains the source
+code for the forecast service. Think of it as downloading a
+.zip file.
+tar -xvf file : We “unzip” the downloaded file to access
+the code inside.
+cd into the file till you find dockerfile : We navigate
+into the unzipped folder. The Dockerfile is a set of
+instructions that tells Docker how to build the image (what
+base system to use, how to copy the code in, etc.).
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 4 - Cloud native application deployment using CCE/notes.md 2/1112/18/25, 11:45 AM notes.md
+docker build -t forecast:v1 . : This is the magic
+command. It reads the Dockerfile and builds a new
+Docker image, naming it forecast:v1 (version 1). We do
+this again to create a v2 , which might have improvements
+or bug fixes.
+B) Loading Pre-Built Images
+docker load -i frontend.tar : This command loads a pre-
+built Docker image from a file on your computer into
+Docker’s storage. We do this for frontend , advertisement ,
+and recommendation because someone else already built
+these images for us and saved them as .tar files.
+Q) What is the difference between and
+docker load
+?
+docker build
+A) This is a great question! Let’s use a cake analogy.
+docker build is like baking a cake from scratch. You start
+with raw ingredients (your source code and a Dockerfile
+recipe) and you create a brand new cake (a new Docker
+image).
+docker load is like buying a pre-baked, frozen cake from
+a store. The cake (Docker image) was already baked (built)
+by someone else. You just need to take it out of its box (the
+.tar file) and put it in your freezer (Docker’s storage) so
+you can eat (run) it later.
+In the lab, we built the forecast image from source code, but
+we loaded the others because we downloaded them as ready-
+to-use packages.
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 4 - Cloud native application deployment using CCE/notes.md 3/1112/18/25, 11:45 AM notes.md
+Phase 3: Storing Our “Boxes” in a Warehouse
+(SWR)
+Purpose: We can’t run our application from just one server. We
+need a central place to store our Docker images so that other
+servers can pull and run them. SWR (Simple Workload
+Repository) is Huawei Cloud’s warehouse for Docker images.
+Create an organization: An organization in SWR is like a
+company name or a brand. It helps group all your images
+together (e.g., clouddemotest000 ).
+Upload images:
+Generate temp login command: This gives us a
+temporary password to prove to SWR that we are
+allowed to upload images.
+docker tag forecast:v1 swr.ap-southeast-
+3.../forecast:v1
+: This command doesn’t move the image; it just gives it
+a new name tag that includes its “shipping address” (the
+SWR repository URL).
+docker push ... : This is the actual “shipping”
+command. It uploads our tagged image from our local
+machine to the SWR warehouse.
+We then tag and push all the other images ( frontend ,
+advertisement , recommendation ) in the same way.
+Phase 4: Creating a “Computer Farm” (CCE
+Cluster)
+Purpose: We need a powerful and reliable place to run our
+containers. A CCE (Cloud Container Engine) cluster is like a
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 4 - Cloud native application deployment using CCE/notes.md 4/1112/18/25, 11:45 AM notes.md
+farm of computers (called Nodes) that are managed as one big
+computer, perfect for running containerized applications.
+We create a cluster with 3 master nodes. These are the
+“manager” computers that don’t run our app but instead
+manage and orchestrate the whole farm, making sure
+everything runs smoothly.
+We set up a VPC network with a CIDR block of
+172.16.0.0/16. This is like building a private, secure road
+network inside our farm so that all our computers can talk
+to each other safely without the outside world interfering.
+Note on IP Ranges: The different IP ranges (10.x.x.x,
+172.16.x.x, 192.168.x.x) are just standard private
+address spaces. Using 172.16.x.x for a medium-sized
+setup is a common convention.
+Phase 5: Adding “Worker” Computers (Worker
+Nodes)
+Purpose: The master nodes are the managers, but we need
+“worker” computers to actually do the job of running our
+weather application containers.
+We buy 2 worker nodes with c6s.2xlarge.2 specs. These
+are the powerful computers that will host our frontend ,
+advertisement , forecast , and recommendation containers.
+Phase 6: Deploying Our Application
+Now we tell our “computer farm” (CCE cluster) how to run our
+application.
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 4 - Cloud native application deployment using CCE/notes.md 5/1112/18/25, 11:45 AM notes.md
+A) Creating MySQL StatefulSet (The Database)
+Purpose: Our application needs a database to store
+information, like user data or ad content. A database needs to
+remember its data even if it restarts, so we use a StatefulSet,
+which is perfect for stateful applications like databases.
+Q) Why do we go to ConfigMaps? What will this step do?
+A) We go to ConfigMaps and Secrets first because our
+database needs sensitive information to start up, like a
+password. We don’t want to write the password directly
+in our instructions because that’s insecure. Instead, we
+store it in a special, secure locker called a Secret. The
+step of creating a secret is like writing the database
+password on a piece of paper and locking it in a safe.
+The StatefulSet will then be given the key to that safe
+when it starts.
+Creating the StatefulSet:
+We select the standard mysql image.
+We add the password as an environment variable
+from the secret we just created. This is like the
+container looking inside the safe to read the password
+when it starts.
+We add data storage (a PVC - Persistent Volume Claim).
+This is like attaching an external hard drive to the
+database container. Even if the container is deleted and
+recreated, the data on this “hard drive” is safe and can
+be reattached.
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 4 - Cloud native application deployment using CCE/notes.md 6/1112/18/25, 11:45 AM notes.md
+B) Creating the Frontend, Recommendation, and Forecast
+Deployments
+Purpose: These are the core services of our app. We use a
+Deployment because these are stateless services—if one
+crashes, we can just start a new one without worrying about
+losing data.
+We create a Deployment for each, selecting the image we
+pushed to SWR.
+For the frontend, we add a LoadBalancer service. This is
+like hiring a receptionist for a big office building. When
+someone from the internet wants to visit our website, the
+LoadBalancer (receptionist) directs them to one of the
+available frontend containers. We note the IP and port the
+receptionist is using so we can visit the site later.
+Of course! Let me explain this in a much simpler way with a
+perfect analogy.
+Think of the Advertisement Service as a
+BANK TELLER
+Why the Bank Teller is Special
+Imagine our weather app is a bank:
+Frontend = The bank’s front door and welcome desk
+Forecast = A consultant who gives financial advice
+Advertisement = The bank teller who handles money
+The bank teller is special because ONLY they need access to
+the VAULT (database)!
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 4 - Cloud native application deployment using CCE/notes.md 7/1112/18/25, 11:45 AM notes.md
+Q1: ConfigMap vs Secret - What’s the difference?
+ConfigMap = The bank’s ADDRESS and HOURS (public
+information)
+advertisement_database_host = “123 Main Street, Vault
+Room”
+advertisement_database_user = “Head Teller”
+This is NOT secret - anyone can know this
+Secret = The VAULT COMBINATION (super secret!)
+advertisement_database_passwd = “15-32-27”
+This MUST be kept private and secure
+We separate them because:
+Directions (ConfigMap) can be public
+Passwords (Secret) must be private
+Q2: Why are we even doing this?
+Imagine if the vault combination was painted on the bank
+wall! If we needed to change the combination, we’d have to
+rebuild the entire bank!
+Instead, we:
+1. Keep the combination in a secret envelope (Secret)
+2. Keep the bank address on a changeable sign (ConfigMap)
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 4 - Cloud native application deployment using CCE/notes.md 8/1112/18/25, 11:45 AM notes.md
+This is brilliant because:
+If we move the vault, we just change the sign (update
+ConfigMap)
+If we change the combination, we just get a new envelope
+(update Secret)
+We never have to rebuild the bank!
+Q3: Why ClusterIP service?
+The Advertisement service (bank teller) should ONLY talk to
+other bank employees - not random people on the street!
+ClusterIP = An internal bank intercom system
+Frontend (welcome desk) can call: “Hey Teller, I need $500
+for a customer!”
+Advertisement (teller) responds through the intercom
+People outside the bank CANNOT use this intercom
+This keeps the teller safe and secure inside the bank.
+The 3 Simple Steps:
+1. Write the directions (ConfigMap)
+“Vault is in Room 5B”
+“Head Teller is on duty”
+2. Seal the combination (Secret)
+🔒
+“Vault code: 15-32-27”
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 4 - Cloud native application deployment using CCE/notes.md 9/1112/18/25, 11:45 AM notes.md
+3. Give the teller an intercom (ClusterIP)
+So only bank staff can talk to them
+Why Only Advertisement Gets This Treatment?
+Because ONLY the bank teller needs the vault!
+Forecast consultant = just gives advice (no vault access)
+Front door attendant = just greets people (no vault access)
+Bank teller = ONLY ONE who handles money (needs vault
+access)
+The advertisement service is special because it’s the ONLY
+one that stores and retrieves important data from the
+database!
+Phase 7: Seeing the Result!
+Go to the frontend workload -> access mode -> copy the
+public IP.
+Paste it in your browser along with the port number.
+Purpose: This is the moment of truth! You are using the
+public IP of the LoadBalancer (the receptionist) to access
+the website you just built. The frontend service will then
+internally call the forecast, recommendation, and
+advertisement services to build the complete webpage you
+see.
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 4 - Cloud native application deployment using CCE/notes.md 10/1112/18/25, 11:45 AM notes.md
+Summary
+In this lab, you:
+1. Built and packaged your application into portable Docker
+images.
+2. Stored them in a central warehouse (SWR).
+3. Set up a managed farm of computers (CCE Cluster) to run
+them.
+4. Deployed your application by giving the cluster
+instructions, carefully using Secrets for sensitive data and
+ConfigMaps for settings.
+5. Connected your services internally (ClusterIP) and
+exposed the frontend to the world (LoadBalancer).
+6. Accessed your final, working weather forecast
+application! Well done
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 4 - Cloud native application deployment using CCE/notes.md 11/1112/18/25, 11:46 AM notes.md
+🚀
+Cloud DevOps Lab
+Adventure: Building an
+Automated Website Factory
+Welcome, future cloud engineer! This guide will transform you into
+a DevOps wizard, teaching you how to build and automate
+websites in the cloud. Let’s embark on this exciting journey!
+🎯
+Lab Mission Overview
+The Big Picture: What We’re Building
+Imagine creating a magical factory that:
+Takes your code (like a recipe)
+Automatically bakes it into a website (like a chef)
+Instantly serves it to the world (like a super-fast delivery
+service)
+Final Result: A website that says “Hello World” → “Hello World
+Change” automatically!
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 5 - Code on cloud with huawei cloud codearts/notes.md 1/1212/18/25, 11:46 AM notes.md
+🏗
+Part 1: Setting Up Our Digital
+Workshop
+🛠
+1.1 Presetting the Lab Environment
+Clicked “Preset Lab Environment”
+Got a pre-built digital workshop
+Like getting a ready-to-use kitchen with all appliances installed
+💡
+Key Concept: Cloud Resources
+Think of these as digital Lego blocks:
+VPC (Virtual Private Cloud): Your private digital
+neighborhood
+Security Groups: Digital security guards controlling
+who enters
+ECS (Elastic Cloud Server): Your virtual computer in the
+cloud
+🎯
+Purpose: We’re preparing our secure digital playground
+where all the magic happens!
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 5 - Code on cloud with huawei cloud codearts/notes.md 2/1212/18/25, 11:46 AM notes.md
+🔐
+1.2 Logging In to Huawei Cloud
+Used lab credentials
+Like using a practice driver’s car instead of your own
+Not personal account
+Keeps your real account safe and separate
+🌟
+Pro Tip: The Exercise Interface is your mission control
+center - everything happens here!
+💻
+Part 2: Renting a Cloud Computer (ECS)
+🖥
+2.1-2.2 Creating Your Elastic Cloud Server
+🚀
+What is an ECS?
+Imagine you need a computer that:
+⏰
+Runs 24/7 without stopping
+🌐
+Is always connected to the internet
+💪
+Can handle thousands of visitors
+🔧
+Can be resized anytime
+That’s your Elastic Cloud Server!
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 5 - Code on cloud with huawei cloud codearts/notes.md 3/1212/18/25, 11:46 AM notes.md
+📋
+ECS Configuration Breakdown
+# Our ECS Recipe:
+Billing Mode: "Pay-per-use" # Like paying
+for electricity - only for what you use!
+Region: "AP-Singapore" # Our computer
+lives in Singapore
+CPU: "2 vCPUs" # 2 virtual
+brains
+Memory: "4 GiB" # 4GB of
+thinking space
+OS: "CentOS 7.6" # The
+computer's personality
+Storage: "40 GB High I/O" # Super-fast
+storage closet
+Internet: "2 Mbit/s EIP" # Our
+website's front door to the world
+🔐
+Security Setup:
+VPC-hce: Our private digital neighborhood
+Security Group sg-hce: Our digital bouncer deciding who
+gets in
+🔑
+Login Credentials:
+Username: root # The super-user (like being
+the boss of the computer)
+Password: hC8iUA0UAs7V%hcj # Our super-secret key
+to enter
+🎯 🏠
+Achievement Unlocked: We now have a powerful cloud
+computer ready to host our website!
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 5 - Code on cloud with huawei cloud codearts/notes.md 4/1212/18/25, 11:46 AM notes.md
+🏭
+Part 3: Building Our Software Factory
+with CodeArts
+📂
+3.1 Creating a Project
+What is a Project?
+Think of it as your project command center - where you plan,
+track, and manage your website building.
+Scrum Template: Like using a pre-made project planner that
+helps teams work together efficiently.
+Scrum is a way for a team to work together on a big project by
+breaking it into small steps, talking about what’s working, and
+helping each other to finish.
+📚
+3.2 Creating a Code Repository
+🌟
+What’s a Code Repository?
+Code Repository
+A magical recipe book that remembers every change
+Stores all your code and its history
+Template A pre-written recipe Gives us a head start
+“Java Web Demo” A “Hello World” website recipe
+Our starting point
+🔮
+Repository Settings:
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 5 - Code on cloud with huawei cloud codearts/notes.md 5/1212/18/25, 11:46 AM notes.md
+Name: WEB-Dev (our project’s name)
+Visibility: Private (only we can see it)
+Permissions: Who can read/write our recipe book
+✏
+3.3 Modifying the Code
+The Change We Made:
+// BEFORE: Website listens on the "side door"
+server.port=8080
+// AFTER: Website listens on the "main entrance"
+server.port=80
+🌐
+Why Port 80?
+Port 80: The standard web door (http://)
+Port 8080: The developer’s testing door
+By using port 80, visitors don’t need to type “:8080” in the
+URL!
+🔨
+3.4 The Build Process - From Code to Program
+🏗
+Build Process Explained:
+Raw Code (Ingredients)
+→ BUILD PROCESS (Robot Chef)
+→ Runnable Program (Finished Cake)
+What Happens During Build?:
+1. Compilation: Checking if our code makes sense
+2. Packaging: Putting all pieces together
+3. Testing: Making sure everything works
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 5 - Code on cloud with huawei cloud codearts/notes.md 6/1212/18/25, 11:46 AM notes.md
+4. Creating Artifact: The final, runnable program
+🚀
+3.5 Deployment: Going Live!
+🎪
+3.5.1 Configuring the Environment
+Creating “web-env”: Our deployment playground name
+Connecting to Our ECS:
+Host Cluster: "group" # A group of
+servers (we have one)
+Connection Type: "Direct" # Straight to our
+ECS
+Host Details:
+- Name: "ecs-Linux"
+- IP: [Our ECS's public address]
+- Username: "root"
+- Password: "hC8iUA0uAs7V%hcj"
+- Port: 22 (SSH - secure connection door)
+✅
+Connectivity Test: Making sure CodeArts can talk to our
+ECS!
+📋
+3.5.2 Creating Deployment Instructions
+Our Deployment Recipe:
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 5 - Code on cloud with huawei cloud codearts/notes.md 7/1212/18/25, 11:46 AM notes.md
+# Deployment Parameters:
+host_group: web-env # Where to deploy
+service_port: 80 # Website door
+number
+spring_path: /usr/local/expert/demoapp.jar # Where
+to put our app
+jdk_path: /usr/local/jdk # Where Java lives
+download_path: /usr/local/expert/ # Where to
+download files
+🚀
+Deployment Steps:
+1. Stop SpringBoot (Skip for first time - nothing running yet!)
+2. Install JDK (Java Development Kit - our website’s language
+interpreter)
+3. Download Build Artifact (Get the finished website from
+build step)
+4. Start SpringBoot (Launch our website!)
+🎉
+The Magic Moment:
+After clicking “Save & Deploy”, we:
+1. Visited our ECS IP address with “/test”
+🌍
+2. Saw “hello world” - OUR WEBSITE IS LIVE!
+🔧
+Troubleshooting Tip: If the website doesn’t show up, we
+might need to tell our security guard (Security Group) to allow
+visitors through door 80!
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 5 - Code on cloud with huawei cloud codearts/notes.md 8/1212/18/25, 11:46 AM notes.md
+⚡
+Part 4: DevOps Automation Magic!
+🔄
+4.1 Creating an Automated Pipeline
+What is a Pipeline?
+Imagine a domino effect for software:
+Code Change → AUTOMATIC BUILD → AUTOMATIC TEST → AUTOMATIC
+DEPLOY → Website Updated!
+Pipeline Configuration:
+Trigger: “Code commit” (when we save changes to our
+recipe book)
+Result: Entire process starts automatically!
+✍
+4.2 Making a Change
+What We Changed:
+// BEFORE:
+return "hello world";
+// AFTER:
+return "hello world Change";
+Commit Message: “Changed” - like leaving a note about what
+we modified in our recipe book.
+🌟
+4.3 Witnessing DevOps Magic!
+The Automated Flow:
+✅
+1. We saved our code change
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 5 - Code on cloud with huawei cloud codearts/notes.md 9/1212/18/25, 11:46 AM notes.md
+🔍
+2. Pipeline automatically detected the change
+🏗
+3. Build process started automatically
+🚀
+4. Deployment process started automatically
+✨
+5. Website updated automatically
+The Proof: Refreshing our browser showed “hello world
+Change” without any manual steps!
+🎓
+Key Concepts Mastered
+🏗
+DevOps Pipeline Explained
+CODE → BUILD → TEST → DEPLOY → MONITOR
+↻_________AUTOMATIC TRIGGER_________↻
+🌐
+Cloud Services We Used
+ECS Virtual Server Renting a computer in the cloud
+CodeArts DevOps Platform Automated software factory
+VPC Virtual Network Private digital neighborhood
+Security Group Firewall Rules Digital security guards
+EIP Public IP Address Your website’s street address
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 5 - Code on cloud with huawei cloud codearts/notes.md 10/1212/18/25, 11:46 AM notes.md
+🔧
+Technical Terms Demystified
+Repository: Magic recipe book that remembers everything
+Build: Turning code into a runnable program
+Deploy: Delivering and starting your program on a server
+Pipeline: Automated assembly line for software
+DevOps: Culture of automation and collaboration between
+developers and operations
+🎉
+Lab Achievement Unlocked!
+You’ve successfully learned:
+✅
+How to create and configure cloud servers
+✅
+How to manage code using repositories
+✅
+How to build programs from source code
+✅
+How to deploy applications to production
+✅
+How to automate the entire software delivery process
+🌟
+The Magic of DevOps: You can now make changes to your
+website and have them automatically go live without manual
+intervention. This is how modern companies like Google,
+Netflix, and Amazon update their services!
+🔮
+Next Steps & Further Learning
+What You Could Build Next:
+Personal portfolio website
+Blog application
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 5 - Code on cloud with huawei cloud codearts/notes.md 11/1212/18/25, 11:46 AM notes.md
+E-commerce store
+Mobile app backend
+Advanced Concepts to Explore:
+Kubernetes: Managing multiple containers
+Microservices: Breaking apps into smaller pieces
+CI/CD: More advanced pipeline configurations
+Cloud Monitoring: Watching your application’s health
+💫
+Final Wisdom
+“The power of DevOps is not just in the tools, but in the
+mindset of continuous improvement and automation.
+You’ve taken your first step into a larger world of cloud
+computing!”
+Keep this guide handy - it’s your roadmap to recalling everything
+🚀
+you learned today. Happy coding!
+📚 ❤
+Lab Notes Compiled with for Future You
+file:///home/shahzan/Work/Huawei/Notes/HCCDA Cloud Native/LAB 5 - Code on cloud with huawei cloud codearts/notes.md 12/12

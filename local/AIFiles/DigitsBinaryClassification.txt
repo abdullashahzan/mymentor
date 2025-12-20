@@ -1,0 +1,86 @@
+import os
+import numpy as np
+import torchvision.datasets.mnist as mnist
+
+# Define the datasets directory
+datasets_dir = './datasets'
+if not os.path.exists(datasets_dir):
+    os.makedirs(datasets_dir)  # Create the datasets directory if it doesn't exist
+# URL of the MNIST dataset zip file
+mnist_url = 'https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/MNIST_data.zip'
+zip_file_path = os.path.join(datasets_dir, 'MNIST_data.zip')
+# Download the MNIST_data.zip file using wget
+!wget {mnist_url} -O {zip_file_path}
+# Unzip the downloaded file into the datasets directory
+!unzip {zip_file_path} -d {datasets_dir}
+
+# Read all training samples.
+train_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-images-idx3-ubyte')).numpy().astype(np.uint8)
+train_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-labels-idx1-ubyte')).numpy().astype(np.uint8)
+# Read all test samples.
+test_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-images-idx3-ubyte')).numpy().astype(np.uint8)
+test_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-labels-idx1-ubyte')).numpy().astype(np.uint8)
+train_zeros = train_data[train_label == 0]
+train_ones = train_data[train_label == 1]
+test_zeros = test_data[test_label == 0]
+test_ones = test_data[test_label == 1]
+
+print('digit 0: training set scale: ', len(train_zeros), ', test set scale: ', len(test_zeros))
+print('digit 1: training set scale: ', len(train_ones), ', test set scale: ', len(test_ones))
+
+# View 30 images of digit 0.
+import numpy as np
+from PIL import Image
+Image.fromarray(np.hstack(train_zeros[:30]))
+
+# View 30 images of digit 1.
+Image.fromarray(np.hstack(train_ones[:30]))
+
+# View the pixel value of an image.
+import pandas as pd
+df = pd.DataFrame(train_data[1])
+df.style.set_properties(**{'font-size':'6pt'}).background_gradient('Greys')
+
+def calc_nonzero_ratio(img):
+    '''Implementation method: Use the <strong>np.count_nonzero</strong> function to count the number of non-zero pixels in the matrix, and divide the number by the image size to obtain the proportion of non-zero pixels.'''
+    img = np.asarray(img)
+    return np.count_nonzero(img) / img.size
+
+zeros_ratio = 0
+for zero in train_zeros:
+    zeros_ratio += calc_nonzero_ratio(zero)
+zeros_ratio = zeros_ratio / len(train_zeros)
+print ('average proportion of non-zero pixels of digit 0:', zeros_ratio)
+
+ones_ratio = 0
+for one in train_ones:
+    ones_ratio += calc_nonzero_ratio(one)
+ones_ratio = ones_ratio / len(train_ones)
+print('average proportion of non-zero pixels of digit 1:', ones_ratio)
+
+th = round((zeros_ratio + ones_ratio) / 2, 4)
+print('classification threshold:', th)
+
+def predict(img):
+    if calc_nonzero_ratio(img) > th:
+        pred_label = 0
+    else:
+        pred_label = 1
+    return pred_label
+
+zero_right_count = 0
+for zero in test_zeros:
+    pred_result = predict(zero)
+    if pred_result == 0:
+        zero_right_count += 1
+print('accuracy of the prediction for digit 0: %.4f' % (float(zero_right_count) / len(test_zeros)))
+
+one_right_count = 0
+for one in test_ones:
+    pred_result = predict(one)
+    if pred_result == 1:
+        one_right_count += 1
+print('accuracy of the prediction for digit 1: %.4f' % (float(one_right_count) / len(test_ones)))
+
+print('overall accuracy of test samples: %.4f' % (float(zero_right_count + one_right_count) / (len(test_zeros) + len(test_ones))))
+

@@ -1,0 +1,160 @@
+import os
+import torch
+import numpy as np
+import torchvision.datasets.mnist as mnist
+
+# Define the datasets directory
+datasets_dir = './datasets'
+if not os.path.exists(datasets_dir):
+    os.makedirs(datasets_dir)  # Create the datasets directory if it doesn't exist
+# URL of the MNIST dataset zip file
+mnist_url = 'https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/MNIST_data.zip'
+zip_file_path = os.path.join(datasets_dir, 'MNIST_data.zip')
+# Download the MNIST_data.zip file using wget
+!wget {mnist_url} -O {zip_file_path}
+# Unzip the downloaded file into the datasets directory
+!unzip {zip_file_path} -d {datasets_dir}
+    
+# Read all training sets.
+train_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-images-idx3-ubyte')).numpy().astype(np.uint8)
+train_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-labels-idx1-ubyte')).numpy().astype(np.uint8)
+# Read all test sets.
+test_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-images-idx3-ubyte')).numpy().astype(np.uint8)
+test_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-labels-idx1-ubyte')).numpy().astype(np.uint8)
+
+print('training set scale:', len(train_data), ',test set scale:', len(test_data))
+
+train_x = train_data.reshape(-1, 28*28)  # Change each set to a row vector to facilitate calculation.
+train_y = train_label.reshape(-1, 1)
+
+test_x = test_data.reshape(-1, 28*28)  # Change each set to a row vector to facilitate calculation.
+test_y = test_label.reshape(-1, 1)
+
+train_data = np.hstack((train_x, train_y))  # Stack two arrays horizontally.
+test_data = np.hstack((test_x, test_y))  # Stack two arrays horizontally.
+np.random.seed(0)
+np.random.shuffle(train_data)  # Disorder the row sequence of the train_data array.
+np.random.shuffle(test_data)  # Disorder the row sequence of the test_data array.
+train_x = train_data[:, :-1]  # Obtain train_x and train_y again.
+train_y = train_data[:, -1].reshape(-1, 1)
+test_x = test_data[:, :-1]  # Obtain test_x and test_y again.
+test_y = test_data[:, -1].reshape(-1, 1)
+
+from PIL import Image
+batch_size = 10  # View 10 sets.
+print(train_y[:batch_size].tolist())
+batch_img = train_x[0].reshape(28, 28)
+for i in range(1, batch_size):
+    batch_img = np.hstack((batch_img, train_x[i].reshape(28, 28)))  # Stack images horizontally to facilitate display in the next step.
+Image.fromarray(batch_img)
+
+train_x = torch.FloatTensor(train_x) / 255.0
+train_y = torch.LongTensor(train_y).squeeze()  # Change train_y to a vector.
+test_x = torch.FloatTensor(test_x) / 255.0
+test_y = torch.LongTensor(test_y).squeeze()  # Change test_y to a vector.
+
+def load_data_all(datasets_dir):
+    import os
+    import torch
+    import numpy as np
+    import torchvision.datasets.mnist as mnist
+
+    # Define the datasets directory
+    datasets_dir = './datasets'
+    if not os.path.exists(datasets_dir):
+        os.makedirs(datasets_dir)  # Create the datasets directory if it doesn't exist
+    # URL of the MNIST dataset zip file
+    mnist_url = 'https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/MNIST_data.zip'
+    zip_file_path = os.path.join(datasets_dir, 'MNIST_data.zip')
+    # Download the MNIST_data.zip file using wget
+    !wget {mnist_url} -O {zip_file_path}
+    # Unzip the downloaded file into the datasets directory
+    !unzip {zip_file_path} -d {datasets_dir}
+        
+    # Read all training sets.
+    train_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-images-idx3-ubyte')).numpy().astype(np.uint8)
+    train_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-labels-idx1-ubyte')).numpy().astype(np.uint8)
+    # Read all test sets.
+    test_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-images-idx3-ubyte')).numpy().astype(np.uint8)
+    test_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-labels-idx1-ubyte')).numpy().astype(np.uint8)
+
+    print('training set scale:', len(train_data), ',test set scale:', len(test_data))
+
+    train_x = train_data.reshape(-1, 28*28)  # Change each set to a row vector to facilitate calculation.
+    train_y = train_label.reshape(-1, 1)
+
+    test_x = test_data.reshape(-1, 28*28)  # Change each set to a row vector to facilitate calculation.
+    test_y = test_label.reshape(-1, 1)
+
+    train_data = np.hstack((train_x, train_y))  # Stack two arrays horizontally.
+    test_data = np.hstack((test_x, test_y))  # Stack two arrays horizontally.
+    np.random.seed(0)
+    np.random.shuffle(train_data)  # Disorder the row sequence of the train_data array.
+    np.random.shuffle(test_data)  # Disorder the row sequence of the test_data array.
+    train_x = train_data[:, :-1]  # Obtain train_x and train_y again.
+    train_y = train_data[:, -1].reshape(-1, 1)
+    test_x = test_data[:, :-1]  # Obtain test_x and test_y again.
+    test_y = test_data[:, -1].reshape(-1, 1)
+
+    train_x = torch.FloatTensor(train_x) / 255.0
+    train_y = torch.LongTensor(train_y).squeeze()
+    test_x = torch.FloatTensor(test_x) / 255.0
+    test_y = torch.LongTensor(test_y).squeeze()
+
+    return train_x, train_y, test_x, test_y
+
+from torch import nn
+
+class Network(nn.Module):
+    def __init__(self, num_of_weights):
+        torch.manual_seed(0)
+        super().__init__()
+        self.fc = nn.Linear(in_features=num_of_weights, out_features=10, bias=True)  # Define a fully connected layer.
+        self.nonlinearity = nn.Sigmoid()
+    
+    def forward(self, x):  # Define a calculation process to implement a weighted summation unit and a non-linear function unit.
+        z = self.fc(x)
+        pred_y = self.nonlinearity(z)
+        return pred_y
+   
+    def evaluate(self, pred_y, true_y):
+        pred_labels = torch.argmax(pred_y, dim=1)
+        acc = (pred_labels == true_y).float().mean()
+        return acc
+
+import torch.nn.functional as F
+loss_fun = F.cross_entropy
+
+net = Network(28*28)
+optimizer = torch.optim.SGD(net.parameters(), lr=0.01)
+
+def train(net, train_x, train_y, test_x, test_y, max_epochs=100):
+    train_losses = []
+    test_losses = []
+    train_accs = []
+    test_accs = []
+    for epoch in range(1, max_epochs + 1):
+        net.train()  # Switch to the training mode.
+        pred_y_train = net.forward(train_x)  # forward propagation
+        train_loss = loss_fun(pred_y_train, train_y)  # Calculate the loss.
+
+        # Calculate the gradient and update the weight.
+        train_loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+
+        if (epoch == 1) or (epoch % 200 == 0):
+            net.eval()  # Switch to the evaluation mode, in which the gradient is not calculated so the calculation is faster.
+            pred_y_test = net.forward(test_x)
+            test_loss = loss_fun(pred_y_test, test_y)
+            train_acc = net.evaluate(pred_y_train, train_y)
+            test_acc = net.evaluate(pred_y_test, test_y)
+            print('epoch %d, train_loss %.4f, test_loss %.4f, train_acc: %.4f, test_acc: %.4f' % (epoch, train_loss.item(), test_loss.item(), train_acc, test_acc))
+    return train_losses, test_losses, train_accs, test_accs
+
+import time
+start_time = time.time()
+max_epochs = 3000
+train_losses, test_losses, train_accs, test_accs = train(net, train_x, train_y, test_x, test_y, max_epochs=max_epochs)
+print('cost time: %.1f s' % (time.time() - start_time))
+

@@ -1,0 +1,2570 @@
+ModelMigrationDeployment.txt's content
+!wget https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/2328/pcb_data.tar
+
+!tar -xf pcb_data.tar
+
+import os
+import random
+import cv2
+import numpy as np
+from  matplotlib import pyplot as plt
+%matplotlib inline
+
+classes = ["open", "short","mousebite","spur","copper",'pin-hole'] 
+file_path = "pcb_data/images/train2017"
+file_list = os.listdir(file_path)
+img_paths = random.sample(file_list, 4)
+img_lists = []
+
+for img_path in img_paths:
+    img_path = os.path.join(file_path, img_path)
+    img = cv2.imread(img_path)
+    h, w, _ = img.shape
+    tl = round(0.002 * (h + w) / 2) + 1
+    color = [random.randint(0, 255) for _ in range(3)]
+    if img_path.endswith('.png'):
+        with open(img_path.replace("images", "labels").replace(".png", ".txt")) as f:
+            labels = f.readlines()
+    if img_path.endswith('.jpg'):
+        with open(img_path.replace("images", "labels").replace(".jpg", ".txt")) as f:
+            labels = f.readlines()
+    for label in labels:
+        l, x, y, wc, hc = [float(x) for x in label.strip().split()]
+        x1 = int((x - wc / 2) * w)
+        y1 = int((y - hc / 2) * h)
+        x2 = int((x + wc / 2) * w)
+        y2 = int((y + hc / 2) * h)
+
+        cv2.rectangle(img, (x1, y1), (x2, y2),
+                      color, thickness=tl, lineType=cv2.LINE_AA)
+        cv2.putText(img,classes[int(l)],(x1,y1-2), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,111,222), 3, cv2.LINE_AA)
+    img_lists.append(cv2.resize(img, (1280, 720)))
+
+image = np.concatenate([np.concatenate(img_lists[:2], axis=1), np.concatenate(img_lists[2:], axis=1)], axis=0)
+plt.rcParams["figure.figsize"] = (20, 10)
+plt.imshow(image[:,:,::-1])
+plt.axis('off')
+plt.show()
+
+!wget https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/2328/code.tar
+
+!tar -xf code.tar
+
+!pip install ultralytics==8.0.109 numpy==1.20.0
+
+!mkdir -p /home/ma-user/.config/Ultralytics
+!cp code/Arial.ttf /home/ma-user/.config/Ultralytics/Arial.ttf
+!rm -rf code/runs/detect
+
+%cd /home/ma-user/work/code
+
+import os
+import yaml
+dataset_path = os.getcwd().replace('/code','/pcb_data') #Note: You are advised to set this parameter to an absolute path to avoid dataset loading errors.
+class_names_list = ['open','short','mousebite','spur','copper','pin-hole']
+
+with open("pcb-detect.yaml", 'r', encoding='utf-8') as yaml_file:
+    content = yaml.load(yaml_file, yaml.FullLoader)
+    content['path'] = dataset_path
+    content['train'] = 'images/train2017'
+    content['val'] = 'images/val2017'
+    content['nc'] = len(class_names_list)
+    content['names'] = class_names_list
+    content['download'] = None
+
+with open("pcb-detect.yaml", 'w', encoding='utf-8') as f:
+    yaml.dump(content, f)
+
+%cd /home/ma-user/work/code
+from ultralytics import YOLO
+
+# Loading a Model
+model = YOLO("yolov8n.pt")  # Load the pre-training model (recommended for training).
+
+# Using Models
+model.train(data="pcb-detect.yaml", epochs=10, imgsz=640)  # Training model
+metrics = model.val()  # Evaluate model performance on a validation set
+
+import os
+import cv2
+from matplotlib import pyplot as plt
+%matplotlib inline
+
+results = model("00041204.jpg" , save=True)  # Predicting images
+
+save_dir = 'runs/detect/predict/00041204.jpg'
+img = cv2.imread(save_dir)
+img = img[:, :, ::-1]
+plt.axis('off')
+plt.imshow(img)
+plt.show()
+
+import os
+import argparse
+import sys
+import yaml
+import moxing as mox
+import shutil
+
+from ultralytics import YOLO
+
+
+if __name__ == "__main__":
+    app_url = os.path.dirname(__file__)
+    sys.path.insert(0, os.path.dirname(__file__))
+    parser = argparse.ArgumentParser(description="train yolov8")
+    parser.add_argument("--data_url", type=str, required=True)#Input path of the training dataset, in yolo format.
+    parser.add_argument("--train_url", type=str, required=True)#Output path of the training model
+    parser.add_argument("--imgsz", type=int, default=640)#Training Picture Size
+    parser.add_argument("--epochs", type=int, default=100)#Training rounds
+    parser.add_argument("--batch", type=int, default=16)#Number of training batches
+    parser.add_argument("--class_names", type=str, default='person,bicycle')#Category definition. The value is a character string. Multiple categories are separated by commas (,). Spaces are not allowed.
+    args = parser.parse_args()
+
+    class_names_list = args.class_names.split(',')
+    current_path = os.getcwd()
+    print("CurrentDir:", current_path)
+    if not os.path.exists(os.path.join(current_path, "yolov8n.pt")):
+        #The yolov8 source code checks whether yolov8n.pt exists in the running directory. If not, the yolov8n.pt will be downloaded from the Internet. However, the ModelArts training environment cannot be downloaded and copied to the running directory.
+        shutil.copy(os.path.join(app_url, "yolov8n.pt"), os.path.join(current_path, "yolov8n.pt"))
+        os.makedirs("/home/ma-user/.config/Ultralytics", exist_ok=True)
+        shutil.copy(os.path.join(app_url, "Arial.ttf"), "/home/ma-user/.config/Ultralytics/Arial.ttf")
+        print("Copy yolov8n.pt & Arial.ttf Successed.")
+
+    #Update Dataset Configuration File
+    with open(os.path.join(app_url, "train", "voc.yaml"), 'r', encoding='utf-8') as yaml_file:
+        content = yaml.load(yaml_file, yaml.FullLoader)
+        content['download'] = None
+        content['train'] = 'images/train2017'
+        content['val'] = 'images/val2017'
+        content['nc'] = len(class_names_list)
+        content['names'] = class_names_list
+        content['path'] = args.data_url
+    with open(os.path.join(app_url, "train", "voc_cache.yaml"), 'w', encoding='utf-8') as f:
+        yaml.dump(content, f)
+
+    #training
+    model = YOLO("yolov8n.pt")
+    model.train(data=os.path.join(app_url, "train", "voc_cache.yaml"), epochs=args.epochs, imgsz=args.imgsz,
+                batch=args.batch, project=args.train_url)
+    metrics = model.val()
+
+    #Copying the training product
+    mox.file.make_dirs(os.path.join(args.train_url, "model"))
+    mox.file.copy(os.path.join(app_url, "train", "config.json"), os.path.join(args.train_url, "model", "config.json"))
+    mox.file.copy(os.path.join(app_url, "train", "customize_service.py"),
+                  os.path.join(args.train_url, "model", "customize_service.py"))
+    mox.file.copy(os.path.join(args.train_url, "train", "weights", "best.pt"),
+                  os.path.join(args.train_url, "model", "best.pt"))
+
+%cd /home/ma-user/work
+import os
+dataset_path = "/home/ma-user/work/pcb_data"
+
+!python /home/ma-user/work/code/train.py --data_url {dataset_path} --train_url 'test_train_outs' --imgsz 640 \
+    --epochs 10 --batch 16 --class_names 'open,short,mousebite,spur,copper,pin-hole'
+
+import moxing as mox
+mox.file.copy_parallel('/home/ma-user/work/code','obs://ll-test/code')
+mox.file.copy_parallel('/home/ma-user/work/pcb_data','obs://ll-test/pcb_data')
+
+try:
+    from model_service.pytorch_model_service import PTServingBaseService
+except:
+    PTServingBaseService = object
+
+import os
+from ultralytics import YOLO
+import logging
+import torch
+import cv2
+import numpy as np
+
+class CustomizeService(PTServingBaseService):
+    def __init__(self, model_name, model_path):
+        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        if torch.cuda.is_available():
+            logger.info('Using GPU for inference')
+        else:
+            logger.info('Using CPU for inference')
+        print(f'running on {self.device}')
+        self.code_url = os.path.dirname(os.path.abspath(__file__))
+        self.model = YOLO(os.path.join(self.code_url, "best.pt"))
+        self.model.to(torch.device(self.device))
+        self.labels = self.model.module.name if hasattr(self.model, 'module') else self.model.names
+
+def _preprocess(self, data):
+    data_list = []
+    for _, v in data.items():
+        for _, file_content in v.items():
+            file_content = file_content.read()
+            img = cv2.imdecode(np.frombuffer(file_content, np.uint8), cv2.IMREAD_COLOR)
+            data_list.append(img)
+    return data_list
+
+def _inference(self, data):
+    with torch.no_grad():
+        data = self.model(data[0])
+    return data
+
+def _postprocess(self, data):
+    result_return = dict()
+    data = data[0].to(torch.device('cpu'))
+    boxes = data.boxes
+    if data is not None:
+        boxes = data.boxes
+        picked_boxes = [[box[1], box[0], box[3], box[2]] for box in boxes.xyxy.tolist()]
+        picked_classes = self.convert_labels(boxes.cls)
+        picked_score = boxes.conf
+        result_return['detection_classes'] = picked_classes
+        result_return['detection_boxes'] = picked_boxes
+        result_return['detection_scores'] = picked_score.tolist()
+    else:
+        result_return['detection_classes'] = []
+        result_return['detection_boxes'] = []
+        result_return['detection_scores'] = []
+    return result_return
+
+def convert_labels(self, label_list):
+    if isinstance(label_list, np.ndarray):
+        label_list = label_list.tolist()
+    label_names = [self.labels[int(index)] for index in label_list]
+    return label_names
+
+%cd /home/ma-user/work/code/output/model
+import os
+from customize_service import CustomizeService
+
+test_path = "/home/ma-user/work/code/00041204.jpg"
+service = CustomizeService(model_name="yolov8", model_path="best.pt")
+
+post_data = {"input_txt": {os.path.basename(test_path): open(test_path, "rb")}}
+
+file_data = service._preprocess(post_data)
+detect_data = service._inference(file_data)
+result = service._postprocess(detect_data)
+print('result:',result)
+
+import moxing as mox
+mox.file.copy_parallel("/home/ma-user/work/code/output/model","obs://ll-test/model")
+
+
+
+KNN.txt's content
+# Import the KNeighborsClassifier method from sklearn.
+from sklearn.neighbors import KNeighborsClassifier
+import numpy as np
+
+X = np.array([[1, 1], [1, 1.5], [2, 2.5], [2.5, 3], [1.5, 1], [3, 2.5]])
+y = ['A', 'A', 'B', 'B', 'A', 'B']
+
+model = KNeighborsClassifier(n_neighbors=4, algorithm='ball_tree')
+
+"""
+<strong>fit</strong> indicates the training function.
+fit()                     
+The training function takes a single input, the training set.
+Each row contains one sample, and each column is a property.
+Only the internal properties of objects are modified. Therefore, this function can be called directly
+to retrieve the training results. Actually, this function does not
+belong to the KNeighborsClassifier class.
+It is a method inherited from its parent class SupervisedIntegerMixin.
+"""
+model.fit(X, y)
+
+# Prediction
+print(model.predict([[1.75, 1.75]]))  #Output the classification result.
+print(model.predict_proba([[1.75, 1.75]]))  #Return the probability that an object belongs to a preset label.
+print(model.score(X, y))  #Output the model training result.
+
+LogisticRegression.txt's content
+import numpy as np
+# Import the LogisticRegression method from sklearn.
+from sklearn.linear_model import LogisticRegression
+# Import the function of splitting training and test sets.
+from sklearn.model_selection import train_test_split
+import moxing as mox
+import os
+
+if not os.path.exists('info.txt'):
+    mox.file.copy('obs://dtse-casezoo/course/hwc_edu/machine_learning/datasets/logistic_regression/info.txt', 'info.txt')
+data = np.loadtxt("./info.txt",
+                  delimiter=",") #Upload the data to OBS and put it in the same working directory as the project. For a local path, enter the file name only. Prefix the file name with **./work/**, so ModelArts can detect the data location.
+print(data)
+
+# Split the data into a training set (70%) and a test set (30%).
+train_x, test_x, train_y, test_y = train_test_split(data[:, 0:2], data[:, 2], test_size=0.3)
+# train_test_split(x, y, test_size=0.3) # **test_size** indicates the ratio of the test set to the entire dataset; *x*: dataset; *y*: target features of the dataset.
+
+model = LogisticRegression()
+
+model.fit(train_x, train_y)
+
+# Test the model.
+pred_y = model.predict(test_x)
+# Check whether the prediction is consistent with the actual value.
+print(pred_y == test_y)
+print(model.score(test_x, test_y))
+
+Influenza.txt's content
+# download dish data
+wget https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com:443/lab2024/Influenza_Patient_Tracing/covid-19-track-v2-en.tar.gz
+
+# decompression of dish data
+tar -zxvf covid-19-track-v2-en.tar.gz
+
+!wget https://obs-aigallery-zc.obs.cn-north-4.myhuaweicloud.com/GES/ges4jupyter/beta/ges4jupyter.py
+!wget https://obs-aigallery-zc.obs.cn-north-4.myhuaweicloud.com/GES/ges4jupyter/beta/ges4jupyter.html
+
+from ges4jupyter import GESConfig, GES4Jupyter, read_csv_config
+eip = 'External access address IP, please change it yourself'
+project_id = 'Project ID, please change it yourself'
+graph_name = 'Graph name, please change it yourself'
+iam_url = 'iam.ap-southeast-3.myhuaweicloud.com'
+domain_name = 'IAM account name, please change it yourself'
+user_name = 'IAM username, please change it yourself'
+password = 'IAM password, please change it yourself'
+project_name = 'ap-southeast-3'
+port = 443  # If the HTTPS security mode is disabled, the value is 80.
+config = GESConfig(eip, project_id, graph_name, 
+                    iam_url = iam_url, 
+                    user_name = user_name, 
+                    password = password, 
+                    domain_name = domain_name,
+                    project_name = project_name,
+                    port = port)
+ges_util = GES4Jupyter(config, True)
+
+print('Start creating vertex index: ')
+job_id = ges_util.build_vertex_index()
+job_result = ges_util.get_job(job_id)
+if 'errorCode' not in job_result:
+    for i in range(100):
+        if job_result['status'] == 'success':
+            break
+        else:
+            time.sleep(1)
+            job_result = ges_util.get_job(job_id)
+print('Creat vertex index complete! ')
+
+print('Start creating edge index: ')
+job_id = ges_util.build_edge_index()
+job_result = ges_util.get_job(job_id)
+if 'errorCode' not in job_result:
+    for i in range(100):
+        if job_result['status'] == 'success':
+            break
+        else:
+            time.sleep(1)
+            job_result = ges_util.get_job(job_id)
+print('Creat edge index complete! ')
+
+import json
+print('Statistics: ')
+result = ges_util.summary()
+format_result = json.dumps(result, indent=4)
+print(format_result)
+
+Statistics: 
+{
+    "vertexNum": 863,
+    "labelDetails": {
+        "labelInVertex": {
+            "city": 8,
+            "patient": 287,
+            "place": 566,
+            "vehicle": 2
+        },
+        "labelInEdge": {
+            "take": 4,
+            "work": 77,
+            "reside": 273,
+            "comfirm": 287,
+            "relation": 72,
+            "stay": 661
+        }
+    },
+    "edgeNum": 1374
+}
+
+cypher_result = ges_util.cypher_query("match (n)-[r]->(m) return n,r,m limit 10",formats=['row','graph']);
+ges_util.format_cypher_result(cypher_result)
+
+print('Check the protection policies of each city: ')
+statement = "match (m:city) return id(m), m.policy"
+result = ges_util.cypher_query(statement)
+format_result = ges_util.format_cypher_result(result)
+format_result
+
+print('Data Update:')
+print('Check whether the query vertex exists: ')
+vertex_id = 'Beijing Case 40'
+statement = "match (p) where id(p) ='" + vertex_id + "' return p"
+result = ges_util.cypher_query(statement)
+# result
+# len(result['data'])
+if len(result['results'][0]['data']) == 0:
+    print('This vertex does not exist, add it:')
+    label = 'patient'
+    property_name = 'gender'
+    value = 'male'
+    ges_util.add_vertex(vertex_id, label, property_name, value)
+    print('Query the vertex again: ')
+    statement = "match (p) where id(p) ='" + vertex_id + "' return p"
+    result = ges_util.cypher_query(statement)
+    format_vertex_detail = json.dumps(result['results'][0]['data'], indent=4, ensure_ascii=False)
+    print(format_vertex_detail)
+
+    print('Add associated edge: ')
+    source = 'Beijing Case 39'
+    target = 'Beijing Case 40'
+    label = 'relation'
+    property_name = 'type'
+    value = 'Relatives.'
+    ges_util.add_edge(source, target, label, property_name, value)
+    statement = "match (p)-[r]-(m) where id(p)='" + source + "' and id(m)='" + target + "' return r"
+    result = ges_util.cypher_query(statement)
+    format_edge_detail = json.dumps(result['results'][0]['data'], indent=4, ensure_ascii=False)
+    print(format_edge_detail)
+else:
+    print('The vertex exists')
+
+Data Update:
+Check whether the query vertex exists: 
+This vertex does not exist, add it:
+Query the vertex again: 
+[
+    {
+        "row": [
+            {
+                "gender": "male",
+                "age": null
+            }
+        ],
+        "meta": [
+            {
+                "id": "Beijing Case 40",
+                "type": "node",
+                "labels": [
+                    "patient"
+                ]
+            }
+        ]
+    }
+]
+Add associated edge: 
+[
+    {
+        "row": [
+            {
+                "type": "Relatives"
+            }
+        ],
+        "meta": [
+            {
+                "id": "Beijing Case 39-Beijing Case 40-4",
+                "type": "relationship",
+                "label": "relation"
+            }
+        ]
+    }
+]
+
+print('View cities with confirmed cases and sort by number of confirmed cases: ')
+statement = "match (m:city)<-[r:comfirm]-(p:patient) with m, count(p) as patientNum return id(m), patientNum order by patientNum desc"
+result = ges_util.cypher_query(statement)
+format_result = ges_util.format_cypher_result(result)
+format_result
+
+print('The trajectory vertex in the graph database are counted according to the number of confirmed cases involved and sorted from the highest to the lowest number of cases：')
+statement = "match (m:place)<-[s:stay]-(p:patient) with m, count(p) as patientNum return id(m), patientNum order by patientNum desc limit 10"
+result = ges_util.cypher_query(statement)
+format_result = ges_util.format_cypher_result(result)
+format_result
+
+print('View the age composition of patients nationwide and sort by number of people:')
+statement = "match (p:patient) where p.age is not null return p.age, count(*) as m order by m desc limit 10"
+result = ges_util.cypher_query(statement)
+format_result = ges_util.format_cypher_result(result)
+format_result
+
+city_id = 'Shijiazhuang City'
+print('View the number of confirmed cases in {} every day:'.format(city_id))
+statement = "match (p:patient)-[r:comfirm]->(m:city) where id(m)='" + city_id + "' return r.datetime, count(*) order by r.datetime asc"
+result = ges_util.cypher_query(statement)
+format_result = ges_util.format_cypher_result(result)
+format_result
+
+statement = "match (n)-[r]-(m) where id(n)='Hu Yanglin Scenic Area' return n,r,m"
+result = ges_util.cypher_query(statement,formats=['row','graph'])
+ges_util.format_cypher_result(result)
+
+statement = "match (n)-[r]-(m) where id(n)='Ejina Banner Case 1' return n,r,m"
+result = ges_util.cypher_query(statement,formats=['row','graph'])
+ges_util.format_cypher_result(result)
+
+patient_id = 'Ejina Banner Case 1'
+print('View the activity track of {}:'.format(patient_id))
+statement = "match (p:patient)-[r]->(m:place) where id(p)='" + patient_id + "' return id(p), r.datetime, type(r), id(m) order by r.datetime asc"
+result = ges_util.cypher_query(statement)
+format_result = ges_util.format_cypher_result(result)
+format_result
+
+patient_id = 'Ejina Banner Case 1'
+print('View patients directly associated with {}:'.format(patient_id))
+print('Either visited a location at the same time:')
+statement = "match path = (p:patient)-[r1]-(m:place)-[r2]-(n:patient) where id(p)='" + patient_id + "' and id(p) <> id(n) and r1.datetime = r2.datetime return id(p), id(m), id(n), r1.datetime, path"
+result = ges_util.cypher_query(statement,formats=['row','graph'])
+format_result = ges_util.format_cypher_result(result)
+format_result
+
+print('Either some kind of intimacy:')
+patient_id = 'Ejina Banner Case 1'
+statement = "match path = (p:patient)-[r]-(n:patient) where id(p)='" + patient_id + "' return id(p), id(n), r.type, path"
+result = ges_util.cypher_query(statement,formats=['row','graph'])
+format_result = ges_util.format_cypher_result(result)
+format_result
+
+statement = "match path=(p:patient)-[]-(m:city) where id(m)='Ejina Banner' and not (tostring(id(p)) contains 'Ejina Banner') return path"
+statement += " union match path=(p:patient)-[]-(m:city) where id(m)='Beijing' and not (tostring(id(p)) contains 'Beijing') return path"
+result = ges_util.cypher_query(statement,formats=['row','graph'])
+ges_util.format_cypher_result(result)
+
+import copy
+statement = "match (p:patient)-[r:comfirm]-(m:city) where id(m)='Beijing' return collect(distinct id(p))"
+result = ges_util.cypher_query(statement)
+print('All patients in Beijing:')
+vertex_list = result["results"][0]['data'][0]['row'][0]
+print(vertex_list)
+print('Check out the possible transmission chain of this round of illness into Beijing:')
+source = 'Ejina Banner'
+chain_vid = []
+for vid in vertex_list:
+    target = vid
+    avoid_ids = copy.deepcopy(vertex_list)
+    avoid_ids.remove(vid)
+    result = ges_util.filtered_shortest_path(source, target, avoid_ids)
+    if len(result) != 0:
+        chain_vid.append(target)
+        path = ''
+        for vtx_id in result:
+            path = path + vtx_id + '-'
+        print(path[:-1])
+
+All patients in Beijing:
+['Beijing Case 1', 'Beijing Case 2', 'Beijing Case 3', 'Beijing Case 4', 'Beijing Case 5', 'Beijing Case 6', 'Beijing Case 7', 'Beijing Case 8', 'Beijing Case 9', 'Beijing Case 10', 'Beijing Case 11', 'Beijing Case 12', 'Beijing Case 13', 'Beijing Case 14', 'Beijing Case 15', 'Beijing Case 16', 'Beijing Case 17', 'Beijing Case 18', 'Beijing Case 19', 'Beijing Case 20', 'Beijing Case 21', 'Beijing Case 22', 'Beijing Case 23', 'Beijing Case 24', 'Beijing Case 25', 'Beijing Case 26', 'Beijing Case 27', 'Beijing Case 28', 'Beijing Case 29', 'Beijing Case 30', 'Beijing Case 31', 'Beijing Case 32', 'Beijing Case 33', 'Beijing Case 34', 'Beijing Case 35', 'Beijing Case 36', 'Beijing Case 37', 'Beijing Case 38', 'Beijing Case 39']
+Check out the possible transmission chain of this round of illness into Beijing:
+Ejina Banner-Beijing Case 24
+Ejina Banner-Beijing Case 25
+Ejina Banner-Beijing Case 33
+Ejina Banner-Beijing Case 34
+Ejina Banner-Beijing Case 35
+Ejina Banner-Beijing Case 36
+Ejina Banner-Beijing Case 37
+Ejina Banner-Yinchuan Case 1-K42-Beijing Case 39
+
+result = ges_util.cypher_query('match p=(n)--(m) where id(n) in $idlist and not (m:city) and not(m:patient and not(id(m) in $idlist)) return id(n),p',formats=['row','graph'], param={"idlist":chain_vid})
+ges_util.format_cypher_result(result)
+
+vertex_id = 'Beijing Case 2'
+print('View {} possible infection paths:'.format(vertex_id))
+result = ges_util.path_query({
+            "repeat": [
+                {
+                    "operator": "bothV",
+                    "vertex_filter": {
+                        "property_filter": {
+                            "leftvalue": {
+                                "id": ""
+                            },
+                            "predicate": "NOTIN",
+                            "rightvalue": {
+                                "value": ["Beijing"]
+                            }
+                        }
+                    }
+                }
+            ],
+            "until": [
+                {
+                    "vertex_filter": {
+                        "property_filter": {
+                            "leftvalue": {
+                                "id": ""
+                            },
+                            "predicate": "=",
+                            "rightvalue": {
+                                "value": ["Ejina Banner"]
+                            }
+                        }
+                    }
+                }
+            ],
+            "times": 5,
+            "queryType": "Tree",
+            "vertices": ["Beijing Case 2"]
+        })
+ges_util.format_path_query(result)
+
+import time
+print('Connectivity analysis:')
+job_id = ges_util.connected_component()
+result = ges_util.get_job(job_id)
+if 'errorCode' not in result:
+    for i in range(1000):
+        if result['status'] == 'success':
+            break
+        else:
+            time.sleep(1)
+            result = ges_util.get_job(job_id)
+com_dict = {}
+for v_dict in result['data']['outputs']['community']:
+    for key, value in v_dict.items():
+        statement = '''match (p) where id(p)="''' + key + '''" return labels(p)'''
+        v_label = ges_util.cypher_query(statement)['results'][0]['data'][0]['row'][0]
+        if v_label in ['city', 'patient']:
+            com_dict.setdefault(value, []).append(key)
+print('Number of connected branches : {}'.format(len(com_dict)))
+for key, value in com_dict.items():
+    print('Points in Connected Branch ' + key + ' (Focus on cities and patients only):')
+    print(value)
+
+import json
+
+# Save as a JSON file
+with open('result.json','w',encoding='utf-8') as f:
+    f.write(json.dumps(com_dict,ensure_ascii=False))
+
+from modelarts.session import Session
+session = Session()
+bkts = session.obs.list_buckets()  # Obtains OBS buckets. The result is a list.
+
+for buc in bkts:
+    obs_save_path = "obs://" + buc + "/result.json"
+    # Upload result.json file to the bucket.
+    session.obs.upload_file(src_local_file="./result.json", dst_obs_dir=obs_save_path)
+
+NaiveBayes.txt's content
+import numpy as np
+from sklearn.naive_bayes import BernoulliNB
+
+X = np.random.randint(2, size=(6, 100))
+Y = np.array([1, 2, 3, 4, 4, 5])
+
+clf = BernoulliNB()
+
+clf.fit(X, Y)
+
+print(clf.predict(X[2:3]))
+
+CART.txt's content
+import pandas as pd
+import os
+import moxing as mox
+
+!wget https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/Titanictrain.csv
+data = pd.read_csv('Titanictrain.csv', sep=',')
+data.head()
+
+data.info()
+
+# Calculate the total number of missing features.
+total = data.isnull().sum().sort_values(ascending=False)
+# Calculate the missing ratio of each feature.
+percent = (data.isnull().sum() / data.isnull().count()).sort_values(ascending=False)
+miss_data = pd.concat([total, percent], axis=1, keys=['Miss_Total', 'Miss_Percent'])
+miss_data.head()
+
+# Handle the missing values.
+# Delete Cabin.
+del data['Cabin']
+# Use the median to fill the missing value.
+data['Age'] = data['Age'].fillna(data['Age'].median())
+# Fill in the missing values.
+data['Embarked'] = data['Embarked'].fillna(data['Embarked'].mode()[0])
+# View the data.
+data.info()
+
+from sklearn.preprocessing import LabelEncoder
+
+# Check the name features and extract the title.
+data['Title'] = data['Name'].str.split(",", expand=True)[1].str.split(".", expand=True)[0]
+# Perform numeric processing for character variables.
+label = LabelEncoder()
+data['Sex_Code'] = label.fit_transform(data['Sex'])
+data['Title_Code'] = label.fit_transform(data['Title'])
+data['Embarked'] = data['Embarked'].astype(str)
+data['Embarked_Code'] = label.fit_transform(data['Embarked'])
+# PassengerId and Ticker are randomly generated variables that do not affect the target variable. Therefore, remove them during feature selection.
+features = ['Pclass', 'Age', 'SibSp', 'Parch', 'Fare', 'Sex_Code', 'Title_Code', 'Embarked_Code', 'Survived']
+data = data[features]
+data.head()
+
+from sklearn.model_selection import train_test_split
+
+X = data[['Pclass', 'Age', 'SibSp', 'Parch', 'Fare', 'Sex_Code', 'Title_Code', 'Embarked_Code']]
+y = data[['Survived']]
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2,
+                                                    random_state=2) # random_state is a random seed. Ensure that the division results are the same.
+
+from sklearn.tree import DecisionTreeClassifier
+
+dtc = DecisionTreeClassifier()
+dtc.fit(X_train, y_train)
+y_predict = dtc.predict(X_test)
+
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import f1_score
+from sklearn.metrics import recall_score
+from sklearn.metrics import precision_score
+
+# Model scoring: accuracy, recall rate, precision rate, and F1 score
+accuracy_score = accuracy_score(y_test, y_predict)
+recall_score = recall_score(y_test, y_predict)
+precision_score = precision_score(y_test, y_predict)
+f1_score = f1_score(y_test, y_predict)
+print("DecisionTreeClassifier Results")
+print("Accuracy      :", accuracy_score)
+print("Recall        :", recall_score)
+print("Precision     :", precision_score)
+print("F1 Score      :", f1_score)
+
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import make_scorer
+
+param = {'max_depth': [1, 3, 5, 7]}
+# Use grid search for parameter tuning.
+gsearch = GridSearchCV(estimator=dtc, param_grid=param, cv=5, scoring='f1')
+gsearch.fit(X=X_train, y=y_train)
+print("Optimal parameter: {}".format(gsearch.best_params_))
+print ("Optimal model: {}".format ((gsearch.best_estimator_)))
+print ("Highest score of the model: {:.3f}".format (gsearch.score (X_test, y_test)))
+
+from sklearn.tree import DecisionTreeClassifier
+import numpy as np
+
+# Select the optimal model for prediction.
+dtc = DecisionTreeClassifier(class_weight=None, criterion='gini', max_depth=3,
+                             max_features=None, max_leaf_nodes=None,
+                             min_samples_leaf=1, min_samples_split=2,
+                             min_weight_fraction_leaf=0.0, presort=False, random_state=None,
+                             splitter='best')
+dtc.fit(X_train, y_train)
+y_predict = dtc.predict(X_test)
+# Print the prediction result.
+print('===================Predicted value=======================')
+print(y_predict)
+# Print the actual value.
+print('===================Actual value=======================')
+print(np.array(y_test).tolist())
+
+PytorchPerceptronBinaryDigitsClassification.txt's content
+import os
+import sys
+
+def load_data_zeros_ones(datasets_dir):
+    import os
+    import numpy as np
+    import torchvision.datasets.mnist as mnist
+
+    # Define the datasets directory
+    datasets_dir = './datasets'
+    if not os.path.exists(datasets_dir):
+        os.makedirs(datasets_dir)  # Create the datasets directory if it doesn't exist
+    # URL of the MNIST dataset zip file
+    mnist_url = 'https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/MNIST_data.zip'
+    zip_file_path = os.path.join(datasets_dir, 'MNIST_data.zip')
+    # Download the MNIST_data.zip file using wget
+    !wget {mnist_url} -O {zip_file_path}
+    # Unzip the downloaded file into the datasets directory
+    !unzip {zip_file_path} -d {datasets_dir}
+    
+    # Read all training samples.
+    train_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-images-idx3-ubyte')).numpy().astype(np.uint8)
+    train_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-labels-idx1-ubyte')).numpy().astype(np.uint8)
+    # Read all test samples.
+    test_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-images-idx3-ubyte')).numpy().astype(np.uint8)
+    test_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-labels-idx1-ubyte')).numpy().astype(np.uint8)
+
+    train_zeros = train_data[train_label == 0]
+    train_ones = train_data[train_label == 1]
+    test_zeros = test_data[test_label == 0]
+    test_ones = test_data[test_label == 1]
+
+    print('Digit 0: Training set scale: ', len(train_zeros), ', Test set scale: ', len(test_zeros))
+    print('Digit 1: Training set scale: ', len(train_ones), ', Test set scale: ', len(test_ones))
+    
+    train_x = np.vstack((train_zeros, train_ones)) # Summarize the samples of digits 0 and 1. <strong>np.vstack</strong> indicates stacking two arrays vertically.
+    train_y = np.array([0] * len(train_zeros) + [1] * len(train_ones)).astype(np.uint8)
+
+    test_x = np.vstack((test_zeros, test_ones))  # Summarize the samples of digits 0 and 1. <strong>np.vstack</strong> indicates stacking two arrays vertically.
+    test_y = np.array([0] * len(test_zeros) + [1] * len(test_ones)).astype(np.uint8)
+    
+    train_x = train_x.reshape(-1, 28*28)  # Reshape each sample into a row vector to facilitate calculation.
+    train_y = train_y.reshape(-1, 1)
+
+    test_x = test_x.reshape(-1, 28*28)  # Reshape each sample into a row vector to facilitate calculation.
+    test_y = test_y.reshape(-1, 1)
+    
+    train_data = np.hstack((train_x, train_y))  # <strong>np.hstack</strong> indicates stacking two arrays horizontally.
+    test_data = np.hstack((test_x, test_y))  # <strong>np.hstack</strong> indicates stacking two arrays horizontally.
+    np.random.seed(0)
+    np.random.shuffle(train_data)  # Shuffle the rows of the <strong>train_data</strong> array.
+    np.random.shuffle(test_data)  # Shuffle the rows of the <strong>test_data</strong> array.
+    train_x = train_data[:, :-1]  # Reshape <strong>train_x</strong> and <strong>train_y</strong>.
+    train_y = train_data[:, -1].reshape(-1, 1)
+    test_x = test_data[:, :-1]  # Reshape <strong>train_x</strong> and <strong>train_y</strong>.
+    test_y = test_data[:, -1].reshape(-1, 1)
+    
+    train_x = train_x.astype(np.float) / 255.0
+    train_y = train_y.astype(np.float)
+
+    test_x = test_x.astype(np.float) / 255.0
+    test_y = test_y.astype(np.float)
+
+    return train_x, train_y, test_x, test_y
+datasets_dir = './datasets'
+train_x, train_y, test_x, test_y = load_data_zeros_ones(datasets_dir)
+
+import torch
+import numpy as np
+
+train_x = torch.tensor(train_x.astype(np.float32))
+train_y = torch.tensor(train_y.astype(np.float32))
+test_x = torch.tensor(test_x.astype(np.float32))
+test_y = torch.tensor(test_y.astype(np.float32))
+
+from torch import nn
+
+class Network(nn.Module):
+    def __init__(self, num_of_weights):
+        torch.manual_seed(0)
+        super().__init__()
+        self.fc = nn.Linear(in_features=num_of_weights, out_features=1, bias=True)  # Define a fully connected layer.
+        self.nonlinearity = nn.Sigmoid()
+    
+    def forward(self, x):  # Define a calculation process to implement a weighted summation unit and a non-linear function unit.
+        z = self.fc(x)
+        pred_y = self.nonlinearity(z)
+        return pred_y
+
+import torch.nn.functional as F
+loss_fun = F.mse_loss
+
+class Network(nn.Module):
+    def __init__(self, num_of_weights):
+        torch.manual_seed(0)
+        super().__init__()
+        self.fc = nn.Linear(in_features=num_of_weights, out_features=1, bias=True)  # Define a fully connected layer.
+        self.nonlinearity = nn.Sigmoid()
+    
+    def forward(self, x):  # Define a calculation process to implement a weighted summation unit and a non-linear function unit.
+        z = self.fc(x)
+        pred_y = self.nonlinearity(z)
+        return pred_y
+   
+    def evaluate(self, pred_y, true_y, threshold=0.5):
+        pred_y[pred_y < threshold] = 0  # If the predicted value is less than 0.5, the digit is 0.
+        pred_y[pred_y >= threshold] = 1
+
+        acc = (pred_y == true_y).float().mean()
+        return acc
+
+
+net = Network(28*28)  # Create a network.
+optimizer = torch.optim.SGD(net.parameters(), lr=0.01)  # Implement gradient descent.
+
+def train(net, train_x, train_y, test_x, test_y, max_epochs=100):
+    train_losses = []
+    test_losses = []
+    train_accs = []
+    test_accs = []
+    for epoch in range(1, max_epochs + 1):
+        net.train()  # Switch to the training mode.
+        pred_y_train = net.forward(train_x)  # forward propagation
+        train_loss = loss_fun(pred_y_train, train_y)  # Calculate the loss.
+
+        # Calculate the gradient and update the weight.
+        train_loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+
+        if (epoch == 1) or (epoch % 10 == 0):
+            net.eval()  # Switch to the evaluation mode, in which the gradient is not calculated so the calculation is faster.
+            pred_y_test = net.forward(test_x)
+            test_loss = loss_fun(pred_y_test, test_y)
+            train_acc = net.evaluate(pred_y_train, train_y)
+            test_acc = net.evaluate(pred_y_test, test_y)
+            print('epoch %d, train_loss %.4f, test_loss %.4f, train_acc: %.4f, test_acc: %.4f' % (epoch, train_loss.item(), test_loss.item(), train_acc, test_acc))
+    return train_losses, test_losses, train_accs, test_accs
+
+import time
+start_time = time.time()
+max_epochs = 50
+train_losses, test_losses, train_accs, test_accs = train(net, train_x, train_y, test_x, test_y, max_epochs=max_epochs)
+print('cost time: %.1f s' % (time.time() - start_time))
+
+DockerImage.txt's content
+apt-get update
+
+apt -y install docker.io
+
+import torch
+print(torch.__version__)
+
+!pip install transformers
+
+import transformers
+
+mkdir -p ~/custom-image/trainjob
+cd ~/custom-image/trainjob
+
+wget https://sandbox-experiment-files.obs.cn-north-4.myhuaweicloud.com:443/lab2024/20221019/trainjob_image.zip
+
+unzip trainjob_image.zip
+
+ls trainjob_image
+
+#The container image building host needs to connect to the public network.
+
+# Basic container image, https://github.com/NVIDIA/nvidia-docker/wiki/CUDA
+# 
+# https://docs.docker.com/develop/develop-images/multistage-build/#use-multi-stage-builds
+# require Docker Engine >= 17.05
+#
+# builder stage
+FROM nvidia/cuda:10.2-runtime-ubuntu18.04 AS builder
+
+# The default user of the basic container image is root.
+# USER root
+
+# Use the pypi configuration provided by Huawei open-source image site.
+RUN mkdir -p /root/.pip/
+COPY pip.conf /root/.pip/pip.conf
+
+# Copy the installation file to the /tmp directory in the basic container image.
+COPY Miniconda3-py37_4.12.0-Linux-x86_64.sh /tmp
+COPY torch-1.8.1+cu102-cp37-cp37m-linux_x86_64.whl /tmp
+COPY torchvision-0.9.1+cu102-cp37-cp37m-linux_x86_64.whl /tmp
+COPY torchaudio-0.8.1-cp37-cp37m-linux_x86_64.whl /tmp
+
+# https://conda.io/projects/conda/en/latest/user-guide/install/linux.html#installing-on-linux
+# Install Miniconda3 in the /home/ma-user/miniconda3 directory of the basic container image.
+RUN bash /tmp/Miniconda3-py37_4.12.0-Linux-x86_64.sh -b -p /home/ma-user/miniconda3
+
+# Install torch*.whl in the default python environment (/home/ma-user/miniconda3/bin/pip) of Miniconda3.
+RUN cd /tmp && \
+    /home/ma-user/miniconda3/bin/pip install --no-cache-dir \
+    /tmp/torch-1.8.1+cu102-cp37-cp37m-linux_x86_64.whl \
+    /tmp/torchvision-0.9.1+cu102-cp37-cp37m-linux_x86_64.whl \
+    /tmp/torchaudio-0.8.1-cp37-cp37m-linux_x86_64.whl
+
+# Build the final container image
+FROM nvidia/cuda:10.2-runtime-ubuntu18.04
+
+# Installing the vim/curl tool (using Huawei open source image sites)
+RUN cp -a /etc/apt/sources.list /etc/apt/sources.list.bak && \
+    sed -i "s@http://.*archive.ubuntu.com@http://repo.huaweicloud.com@g" /etc/apt/sources.list && \
+    sed -i "s@http://.*security.ubuntu.com@http://repo.huaweicloud.com@g" /etc/apt/sources.list && \
+    apt-get update && \
+    apt-get install -y vim curl && \
+    apt-get clean && \
+    mv /etc/apt/sources.list.bak /etc/apt/sources.list
+
+# To add a ma-user user (uid = 1000, gid = 100), run the following command:
+# Note that the basic container image already has a group with gid = 100, so the ma-user user can directly use it.
+RUN useradd -m -d /home/ma-user -s /bin/bash -g 100 -u 1000 ma-user
+
+# Copy the /home/ma-user/miniconda3 directory from the builder stage to the directory with the same name as the current container image.
+COPY --chown=ma-user:100 --from=builder /home/ma-user/miniconda3 /home/ma-user/miniconda3
+
+# Setting the Preconfigured Environment Variables for Container Images
+# Set PYTHONUNBUFF:00-20:00=1 to avoid log loss.
+ENV PATH=$PATH:/home/ma-user/miniconda3/bin \
+    PYTHONUNBUFFERED=1
+
+# Setting the Default User and Working Directory of the Container Image
+USER ma-user
+WORKDIR /home/ma-user
+
+cd trainjob_image
+ll
+
+vim Dockerfile
+
+# builder stage
+FROM swr.cn-north-4.myhuaweicloud.com/deep-learning-cloud/cuda:11.1.1-runtime-ubuntu18.04 AS builder
+
+# Build the final container image
+FROM swr.cn-north-4.myhuaweicloud.com/deep-learning-cloud/cuda:11.1.1-runtime-ubuntu18.04
+
+docker build . -t pytorch_trainjob:1.8.1-cuda10.2
+
+docker tag pytorch_trainjob:1.8.1-cuda10.2 swr.ap-southeast-3.myhuaweicloud.com/deep-learning-dcyang/pytorch_trainjob:1.8.1-cuda10.2
+
+docker push swr.ap-southeast-3.myhuaweicloud.com/deep-learning-dcyang/pytorch_trainjob:1.8.1-cuda10.2
+
+vim verification.py
+
+import torch
+import torch.nn as nn
+
+x = torch.randn(5, 3)
+print(x)
+
+available_dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+y = torch.randn(5, 3).to(available_dev)
+print(y)
+
+python verification.py
+
+mkdir -p ~/custom-image/infer
+cd ~/custom-image/infer
+
+docker pull swr.cn-north-4.myhuaweicloud.com/deep-learning-cloud/ubuntu:18.04
+
+vim test_app.py
+
+from flask import Flask, request
+import json 
+app = Flask(__name__)
+
+@app.route('/greet', methods=['POST'])
+def say_hello_func():
+    print("----------- in hello func ----------")
+    data = json.loads(request.get_data(as_text=True))
+    print(data)
+    username = data['name']
+    rsp_msg = 'Hello, {}!'.format(username)
+    return json.dumps({"response":rsp_msg}, indent=4)
+
+@app.route('/goodbye', methods=['GET'])
+def say_goodbye_func():
+    print("----------- in goodbye func ----------")
+    return '\nGoodbye!\n'
+
+@app.route('/', methods=['POST'])
+def default_func():
+    print("----------- in default func ----------")
+    data = json.loads(request.get_data(as_text=True))
+    return '\n called default func !\n {} \n'.format(str(data))
+
+# host must be "0.0.0.0", port must be 8080
+if __name__ == '__main__':
+    app.run(host="0.0.0.0", port=8080)
+
+vim Dockerfile
+
+From ubuntu:18.04
+# Configure the source of HUAWEI CLOUD and install python, python3-pip, and Flask.
+RUN cp -a /etc/apt/sources.list /etc/apt/sources.list.bak && \
+  sed -i "s@http://.*security.ubuntu.com@http://repo.huaweicloud.com@g" /etc/apt/sources.list && \
+  sed -i "s@http://.*archive.ubuntu.com@http://repo.huaweicloud.com@g" /etc/apt/sources.list && \
+  apt-get update && \
+  apt-get install -y python3 python3-pip && \
+  pip3 install  --trusted-host https://repo.huaweicloud.com -i https://repo.huaweicloud.com/repository/pypi/simple Flask
+
+# Copy the application service code to the image.
+COPY test_app.py /opt/test_app.py
+
+# Specifies the boot command for the image.
+CMD python3  /opt/test_app.py
+
+docker build -t test:v1 .
+
+docker run -it -p 8080:8080 test:v1
+
+curl -X POST -H "Content-Type: application/json" --data '{"name":"Tom"}'  127.0.0.1:8080/
+curl -X POST -H "Content-Type: application/json" --data '{"name":"Tom"}' 127.0.0.1:8080/greet
+curl -X GET 127.0.0.1:8080/goodbye
+
+docker tag test:v1 swr.ap-southeast-3.myhuaweicloud.com/deep-learning-dcyang/test:v1
+
+docker push swr.ap-southeast-3.myhuaweicloud.com/deep-learning-dcyang/test:v1
+
+[{
+        "url": "/",
+        "method": "post",
+        "request": {
+            "Content-type": "application/json"
+        },
+        "response": {
+            "Content-type": "application/json"
+        }
+    },
+{
+        "url": "/greet",
+        "method": "post",
+        "request": {
+            "Content-type": "application/json"
+        },
+        "response": {
+            "Content-type": "application/json"
+        }
+    },
+{
+        "url": "/goodbye",
+        "method": "get",
+        "request": {
+            "Content-type": "application/json"
+        },
+        "response": {
+            "Content-type": "application/json"
+        }
+    }
+]
+
+{"hello": "my name is modelarts"}
+
+DigitsRecognition.txt's content
+# Create the <strong>datasets</strong> directory.
+import os
+datasets_dir = './datasets'
+if not os.path.exists(datasets_dir):
+    os.makedirs(datasets_dir)
+    
+# URL of the MNIST dataset zip file
+mnist_url = 'https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/MNIST_data.zip'
+zip_file_path = os.path.join(datasets_dir, 'MNIST_data.zip')
+# Download the MNIST_data.zip file using wget
+!wget {mnist_url} -O {zip_file_path}
+# Unzip the downloaded file into the datasets directory
+!unzip {zip_file_path} -d {datasets_dir}
+
+import os
+import torchvision.datasets.mnist as mnist
+
+# Read training samples.
+train_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-images-idx3-ubyte'))
+train_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-labels-idx1-ubyte'))
+# Read test samples.
+test_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-images-idx3-ubyte'))
+test_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-labels-idx1-ubyte'))
+
+print('training set scale:', train_data.shape, train_label.shape) # 60,000 training samples
+print('training set scale:', test_data.shape, test_label.shape) # 10,000 training samples
+
+from PIL import Image
+img = train_data[1].numpy() # train_data[1] is in the tensor format. Convert it to the NumPy format.
+print('image label:', train_label[1].item())
+print ('image size :', img.shape)
+Image.fromarray(img) # Convert the image to a format supported by PIL for display.
+
+img = train_data[3].numpy() # train_data[3] is in the tensor format. Convert it to the NumPy format.
+print('image label:', train_label[3].item())
+print ('image size :', img.shape)
+Image.fromarray(img) # Convert the image to a format supported by PIL for display.
+
+ImageRec.txt's content
+# download data 
+wget https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com:443/lab2024/20230302/foods_10c.tar.gz
+
+# decompress file
+tar -zxvf foods_10c.tar.gz
+
+import moxing as mox
+mox.file.copy_parallel(${notebook_path}, ${obs_datat_path})
+
+wget https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/train.zip
+
+unzip train.zip
+
+!python ./train/run.py --data_url './foods_10c/images' --train_url './train_output' --train_epochs 20
+
+ wget https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/deploy.zip
+
+unzip deploy.zip
+
+import moxing as mox
+mox.file.copy_parallel(${notebook_deploy_path}, ${obs_deploy_path})
+
+import moxing as mox
+mox.file.copy('./train_output/model/best_model.pth', 'obs://your_obs_bucketName/output/model/best_model.pth')
+
+# -*- coding: utf-8 -*-
+import os
+import sys
+import torch
+from models.resnet import * 
+import numpy as np
+import cv2
+from collections import OrderedDict
+import time
+import copy
+import datetime
+import os
+
+from torchvision import transforms
+from PIL import Image
+from model_service.pytorch_model_service import PTServingBaseService
+
+
+class ModelClass(PTServingBaseService):
+    def __init__(self, model_name='', model_path=r'./best_model.pth'):
+        """
+        TODO Add the process of building models and loading weights in this method. Different models can be customized and modified as required.
+        :param model_name: This parameter must be reserved. You can transfer a random character string value.
+        :param model_path: Path where the model is located. For example, xxx/xxx.h5 and xxx/xxx.pth are the model names in the model package.
+        """
+        self.model_name = model_name  # The line code must be retained and does not need to be modified.
+        self.model_path = model_path  # The line code must be retained and does not need to be modified.
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # image transform
+        self.transform = transforms.Compose(
+                [
+                    transforms.Resize((224, 224)),
+                    transforms.ToTensor(),
+                    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                         std=[0.229, 0.224, 0.225])
+                ])
+      
+        # self.model = torch.load(self.model_path).to(self.device)
+        self.model = resnet50()
+        self.model.load_state_dict(torch.load(self.model_path, self.device))
+        self.model.to(self.device)
+        self.model.eval()
+        # The following is what I use to classify, show the English class name.
+        self.label_id_name_dict = {
+                "0": "barbecue_chilled_noodles",
+                "1": "cream_polenta_cake",
+                "2": "donuts",
+                "3": "egg_pudding",
+                "4": "ice_cream",
+                "5": "mango_pancake",
+                "6": "mashed_potato",
+                "7": "millet_congee",
+                "8": "sandwich",
+                "9": "sweet_and_sour_fish",
+            }
+
+    def _preprocess(self, data):
+        """
+        Preprocess，transform
+        """
+        preprocessed_data = {}
+        for k, v in data.items():
+            for file_name, file_content in v.items():
+                img = Image.open(file_content)
+                img = img.convert('RGB')
+                images = self.transform(img)
+                images = torch.unsqueeze(images, 0).to(self.device)
+                preprocessed_data[k] = images
+        return preprocessed_data
+
+    def _inference(self, data):
+        """
+        TODO Implement the model inference process in this function. Different models can be customized and modified as required.
+        """
+        src_img = data['images']  # Does images look familiar? I define the data in the request in config.json.
+
+        # Mine is a category. Only the Chinese name of the class with the highest probability is returned.
+        with torch.no_grad():
+            output = self.model(src_img)
+        _, pred = output.topk(1, 1, True, True)
+
+        result = self.label_id_name_dict[str(pred.cpu().numpy()[0][0])]
+        return result
+
+{
+    "model_algorithm": "image_classification",
+    "model_type": "PyTorch",
+    "runtime": "pytorch_1.8.0-cuda_10.2-py_3.7-ubuntu_18.04-x86_64",
+    "metrics": {
+        "f1": 0,
+        "accuracy": 0.6253,
+        "precision": 0,
+        "recall": 0
+    },
+    "apis": [
+        {
+            "procotol": "http",
+            "url": "/",
+            "method": "post",
+            "request": {
+                "Content-type": "multipart/form-data",
+                "data": {
+                    "type": "object",
+                    "properties": {
+                        "images": {"type": "file"}
+                    },
+                    "required": ["images"]
+                }
+            },
+            "response": {
+                "Content-type": "multipart/form-data",
+                "data": {
+                    "type": "object",
+                    "properties": {
+                        "result": {"type": "string"}
+                    },
+                    "required": ["result"]
+                }
+            }
+        }
+    ],
+    "dependencies": [
+        {
+            "installer": "pip",
+            "packages": [
+                {
+                    "package_name": "Pillow",
+                    "package_version": "5.0.0",
+                    "restraint": "ATLEAST"
+                }
+            ]
+        }
+    ]
+}
+
+
+
+
+
+
+
+# -------------- #
+
+Custom Algorithm for Image RecThis experiment describes how to create a custom algorithm, create a training job based on that, and deploy an AI application, then deploy a Huawei Real-Time service.Prerequisites: Log in to HUAWEI CLOUDOpen the Browser and go to the HUAWEI CLOUD login page. Select IAM User Login. In the login dialog box, access the HUAWEI CLOUD lab account and password allocated by the system to log in to HUAWEI CLOUD, as shown below.Note: For details about your account information, see the upper part of the lab manual. Do not use your HUAWEI CLOUD account to log in.1. Create a Custom Algorithm1.1 Creating an OBS File Directory1. On the HUAWEI CLOUD console,  move the cursor to the left sidebar, and in the pop-up menu bar,click Service List -> Storage -> Object Storage Service, as shown below.2. In the navigation pane on the left, choose Bucket List and click Create Bucket under Dashboard. As shown in the following figure:3. On the Create Bucket page, perform the following configurations and retain the default values for other parameters:    Region: Select AP-Singapore.   Bucket Name: User-defined. In this example, custom-algo is used.	   Bucket policy: Select Private and click Continue in the dialog box that is displayed.	4. Click Create Now. 5. The bucket is successfully created and displayed in the bucket list. Click the bucket name to go to the details page. As shown in the following figure:6. Click Object > New Folder. As shown in the following figure:Create three folders, named data, code, and output in sequence to store data, code, and exported training models, respectively. The following figure shows the creation.1.2 Downloading Dataset1. Log in to the HUAWEI CLOUD console, move the cursor to the left navigation bar, and choose Service List > EI Enterprise Intelligence > ModelArts, as shown below.	2. On the ModelArts management console, click DevEnviron > Notebook in the navigation bar on the left. The Notebook list page is displayed, as shown below.3. Click Create in the upper left corner of the page to create a notebook and set parameters, as shown below.After setting the parameters, click Next, confirming the product specifications, and then click Submit to complete the creation of the notebook.4. Return to the notebook list page, after the status of the new Notebook changes to Running, click Operation > Open to access the notebook.	1.3 Obtaining and Uploading Data1. On the Notebook page,click Launcher -> Terminal, as shown below.Run the following command to download the dataset: foods_10c. The dataset contains ten categories of food images with 500 images of each category and 5000 images in total.                            Copy Code# download data wget https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com:443/lab2024/20230302/foods_10c.tar.gzAfter downloading, decompress it.                            Copy Code# decompress filetar -zxvf foods_10c.tar.gzThen you can click Refresh button, and you will view the decompressed folder.2. Now, you need to upload the local dataset to the created OBS bucket in the previous step. Click Add button to create a Notebook.3. Complete the following code, and then run it to complete the dataset upload.                            Copy Codeimport moxing as moxmox.file.copy_parallel(${notebook_path}, ${obs_datat_path})NOTICE:● ${notebook_path} indicates the dataset storage path(./foods_10c) in the notebook.● ${obs_data_path} indicates path for storing datasets in OBS. You can copy the OBS path here.4. After running the code, return to OBS and click refresh button  the page. You can see files in the data folder.1.4 Obtaining and Uploading Code	1.  Run the following command to download the training code in terminal on notebook:                            Copy Codewget https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/train.zipThen run the following command to decompress the code file:                            Copy Codeunzip train.zipThe following figure shows the execution result.Then you can click Refresh button, and you will view the decompressed folder.----------------------------------------------1.5 TrainingExecute the following command in the notebook.                            Copy Code!python ./train/run.py --data_url './foods_10c/images' --train_url './train_output' --train_epochs 20After successful execution, you will see 'best_model.pth' in the train_output directory.3. Service deployment3.1 Preparing the Inference CodeBack to the Notebook page. Open the terminal, run the following command to download the training code:                            Copy Code wget https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/deploy.zipRun the following command to decompress the code file:                            Copy Codeunzip deploy.zipBack to the Notebook, add a cell, Complete the following code, and then run it to complete the code upload.                            Copy Codeimport moxing as moxmox.file.copy_parallel(${notebook_deploy_path}, ${obs_deploy_path})NOTICE:● ${notebook_deploy_path} indicates the code storage path(./deploy) in the notebook.● ${obs_deploy_path} indicates path for storing code in OBS. 3.2 Copy best_model.pth to OBS Related dependency code is stored in the models directory.3.3 Creating an AI Application1. Log in to the ModelArts console. In the navigation pane, choose AI Application Management > AI Application. On the displayed page, click Create AI Application. As shown in the following figure:2. On the Create AI Application page, perform the following configurations and retain the default settings for other parameters: Name: In this example, model-custom-algo is used.Meta Model Source: Select OBS.Meta Model: Select '/your_OBS_bucketName/output/model/' 	3. Click Create Now. As shown in the following figure:4. After the submission, the status is Importing. As shown in the following figure:The build is successful and the status is Normal. As shown in the following figure:3.4 Deploying Real-Time Services1. Expand the Application page and choose Deploy > Real-Time Services. As shown in the following figure:2. Set the parameters as follows:Name: please rename as service-custom-algo.Resource Pool: Select Public Resource Pool.AI Application and Configuration: Select My AI Applications, model-custom-algo (sync request), and 0.0.1 (normal). Specofications: CPU: 2vCPUs 8GB.3. Click Next. As shown in the following figure:Then click Submit. As shown in the following figure:Click View Service Details. As shown in the following figure:4. The status is Deploying. As shown in the following figure:The deployment is successful and the status is Running. As shown in the following figure:4. Upload test image and predict the result.1. Download any image from the OBS data directory. As shown in the following figure:2. Upload an image on the Service Prediction page and perform the test. As shown in the following figure:Click Upload to select the test image, and then click Predict. You can view the test result on the right.CNN.txt's content
+import os
+import sys
+
+def load_data_all(datasets_dir):
+    import os
+    import torch
+    import numpy as np
+    import torchvision.datasets.mnist as mnist
+
+    # Define the datasets directory
+    datasets_dir = './datasets'
+    if not os.path.exists(datasets_dir):
+        os.makedirs(datasets_dir)  # Create the datasets directory if it doesn't exist
+    # URL of the MNIST dataset zip file
+    mnist_url = 'https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/MNIST_data.zip'
+    zip_file_path = os.path.join(datasets_dir, 'MNIST_data.zip')
+    # Download the MNIST_data.zip file using wget
+    !wget {mnist_url} -O {zip_file_path}
+    # Unzip the downloaded file into the datasets directory
+    !unzip {zip_file_path} -d {datasets_dir}
+        
+    # Read all training sets.
+    train_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-images-idx3-ubyte')).numpy().astype(np.uint8)
+    train_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-labels-idx1-ubyte')).numpy().astype(np.uint8)
+    # Read all test sets.
+    test_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-images-idx3-ubyte')).numpy().astype(np.uint8)
+    test_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-labels-idx1-ubyte')).numpy().astype(np.uint8)
+
+    print('training set scale:', len(train_data), ',test set scale:', len(test_data))
+
+    train_x = train_data.reshape(-1, 28*28)  # Change each set to a row vector to facilitate calculation.
+    train_y = train_label.reshape(-1, 1)
+
+    test_x = test_data.reshape(-1, 28*28)  # Change each set to a row vector to facilitate calculation.
+    test_y = test_label.reshape(-1, 1)
+
+    train_data = np.hstack((train_x, train_y))  # Stack two arrays horizontally.
+    test_data = np.hstack((test_x, test_y))  # Stack two arrays horizontally.
+    np.random.seed(0)
+    np.random.shuffle(train_data)  # Disorder the row sequence of the train_data array.
+    np.random.shuffle(test_data)  # Disorder the row sequence of the test_data array.
+    train_x = train_data[:, :-1]  # Obtain train_x and train_y again.
+    train_y = train_data[:, -1].reshape(-1, 1)
+    test_x = test_data[:, :-1]  # Obtain test_x and test_y again.
+    test_y = test_data[:, -1].reshape(-1, 1)
+
+    train_x = torch.FloatTensor(train_x) / 255.0
+    train_y = torch.LongTensor(train_y).squeeze()
+    test_x = torch.FloatTensor(test_x) / 255.0
+    test_y = torch.LongTensor(test_y).squeeze()
+
+    return train_x, train_y, test_x, test_y
+
+datasets_dir = './datasets'
+train_x, train_y, test_x, test_y = load_data_all(datasets_dir)
+
+print ("Original dimension: ", train_x.shape, test_x.shape)
+train_x = train_x.view(-1, 1, 28, 28)
+test_x = test_x.view(-1, 1, 28, 28)
+print ("Converted dimension: ", train_x.shape, test_x.shape)
+
+import torch
+from torch import nn
+
+class Network(nn.Module):
+    def __init__(self, num_of_weights):
+        """
+        The network consists of only three layers: convolutional layer 1, convolutional layer 2, and full-mesh layer 1. <strong>ReLU</strong> and <strong>MaxPool2d</strong> are not included in the count of network layers as they do not contain parameters.
+        """
+        torch.manual_seed(0)
+        super().__init__()
+        
+        # Convolution 1
+        self.cnn1 = nn.Conv2d(in_channels=1, out_channels=16, kernel_size=5, stride=1, padding=0) # Convolutional layer 1: one input channel, 16 output channels, convolution kernel size of 5, sliding step of 1, and no edge padding.
+        self.relu1 = nn.ReLU() # Activation layer 1 uses the most commonly used ReLU activation function for convolutional networks.
+        self.maxpool1 = nn.MaxPool2d (kernel_size=2) # Max pooling layer 1
+     
+        # Convolution 2
+        self.cnn2 = nn.Conv2d(in_channels=16, out_channels=32, kernel_size=5, stride=1, padding=0) # Convolutional layer 2: 16 input channels, 32 output channels, convolution kernel size of 5, sliding step of 1, and no edge padding.
+        self.relu2 = nn.ReLU() # Activation layer 2 uses the most commonly used ReLU activation function for convolutional networks.
+        self.maxpool2 = nn.MaxPool2d (kernel_size=2) # Max pooling layer 2
+        
+        # Fully connected 1
+        self.fc1 = nn.Linear(32 * 4 * 4, 10)  # Fully connected layer 1. The input dimensions are 32 x 4 x 4, and the output dimensions are 10.
+    
+    def forward(self, x):
+        """
+        Forward propagation function
+        """
+        # Convolution 1
+        out = self.cnn1 (x) # convolution
+        out = self.relu1 (out) # activation
+        out = self.maxpool1 (out) # pooling
+        
+        # Convolution 2 
+        out = self.cnn2 (out) # convolution
+        out = self.relu2 (out) # activation
+        out = self.maxpool2 (out) # pooling
+        
+        # Fully connected 1
+        out = out.view(out.size(0), -1) # Before being input to the fully connected layer, the 32 x 4 feature matrices need to be flattened into a one-dimensional vector.
+        out = self.fc1(out) # Calculate the fully connected layer.
+        
+        return out
+        
+    def evaluate(self, pred_y, true_y):
+        """
+        Accuracy statistics function, which is the same as that in the previous section.
+        """
+        pred_labels = torch.argmax(pred_y, dim=1)
+        acc = (pred_labels == true_y).float().mean()
+        return acc
+
+import torch.nn.functional as F
+loss_fun = F.cross_entropy
+
+net = Network(28*28)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+net = net.to(device)
+optimizer = torch.optim.SGD(net.parameters(), lr=0.01)
+
+def train(net, train_x, train_y, test_x, test_y, max_epochs=100):
+    train_losses = []
+    test_losses = []
+    train_accs = []
+    test_accs = []
+    for epoch in range(1, max_epochs + 1):
+        net.train()  # Switch to the training mode.
+        train_x, train_y = train_x.to(device), train_y.to(device)
+        pred_y_train = net.forward(train_x)  # forward propagation
+        train_loss = loss_fun(pred_y_train, train_y)  # Calculate the loss.
+
+        # Calculate the gradient and update the weight.
+        train_loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+
+        if (epoch == 1) or (epoch % 200 == 0):
+            net.eval()  # Switch to the evaluation mode, in which the gradient is not calculated so the calculation is faster.
+            test_x, test_y = test_x.to(device), test_y.to(device)
+            pred_y_test = net.forward(test_x)
+            test_loss = loss_fun(pred_y_test, test_y)
+            train_acc = net.evaluate(pred_y_train, train_y)
+            test_acc = net.evaluate(pred_y_test, test_y)
+            print('epoch %d, train_loss %.4f, test_loss %.4f, train_acc: %.4f, test_acc: %.4f' % (epoch, train_loss.item(), test_loss.item(), train_acc, test_acc))
+    return train_losses, test_losses, train_accs, test_accs
+
+import time
+start_time = time.time()
+max_epochs = 3000
+train_losses, test_losses, train_accs, test_accs = train(net, train_x, train_y, test_x, test_y, max_epochs=max_epochs)
+print('cost time: %.1f s' % (time.time() - start_time))
+
+Perceptron.txt's content
+import os
+import numpy as np
+import torchvision.datasets.mnist as mnist
+
+# Define the datasets directory
+datasets_dir = './datasets'
+if not os.path.exists(datasets_dir):
+    os.makedirs(datasets_dir)  # Create the datasets directory if it doesn't exist
+# URL of the MNIST dataset zip file
+mnist_url = 'https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/MNIST_data.zip'
+zip_file_path = os.path.join(datasets_dir, 'MNIST_data.zip')
+# Download the MNIST_data.zip file using wget
+!wget {mnist_url} -O {zip_file_path}
+# Unzip the downloaded file into the datasets directory
+!unzip {zip_file_path} -d {datasets_dir}
+
+# Read all training samples.
+train_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-images-idx3-ubyte')).numpy().astype(np.uint8)
+train_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-labels-idx1-ubyte')).numpy().astype(np.uint8)
+# Read all test samples.
+test_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-images-idx3-ubyte')).numpy().astype(np.uint8)
+test_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-labels-idx1-ubyte')).numpy().astype(np.uint8)
+
+train_zeros = train_data[train_label == 0]
+train_ones = train_data[train_label == 1]
+test_zeros = test_data[test_label == 0]
+test_ones = test_data[test_label == 1]
+
+print('Digit 0: Training set scale: ', len(train_zeros), ', Test set scale: ', len(test_zeros))
+print('Digit 1: Training set scale: ', len(train_ones), ', Test set scale: ', len(test_ones))
+
+Digit 0: Training set scale: 5923 , Test set scale: 980
+Digit 1: Training set scale: 6742 , Test set scale: 1135
+
+train_x = np.vstack((train_zeros, train_ones)) # Summarize the samples of digits 0 and 1. <strong>np.vstack</strong> indicates stacking two arrays vertically.
+train_y = np.array([0] * len(train_zeros) + [1] * len(train_ones)).astype(np.uint8)
+
+test_x = np.vstack((test_zeros, test_ones))  # Summarize the samples of digits 0 and 1. <strong>np.vstack</strong> indicates stacking two arrays vertically.
+test_y = np.array([0] * len(test_zeros) + [1] * len(test_ones)).astype(np.uint8)
+
+train_x = train_x.reshape(-1, 28*28)  # Reshape each sample into a row vector to facilitate calculation.
+train_y = train_y.reshape(-1, 1)
+
+test_x = test_x.reshape(-1, 28*28)  # Reshape each sample into a row vector to facilitate calculation.
+test_y = test_y.reshape(-1, 1)
+
+print(train_x.shape, train_y.shape, test_x.shape, test_y.shape)
+
+train_data = np.hstack((train_x, train_y))  # <strong>np.hstack</strong> indicates stacking two arrays horizontally.
+test_data = np.hstack((test_x, test_y))  # <strong>np.hstack</strong> indicates stacking two arrays horizontally.
+np.random.seed(0)
+np.random.shuffle(train_data)  # Shuffle the rows of the <strong>train_data</strong> array.
+np.random.shuffle(test_data)  # Shuffle the rows of the <strong>test_data</strong> array.
+train_x = train_data[:, :-1]  # Reshape <strong>train_x</strong> and <strong>train_y</strong>.
+train_y = train_data[:, -1].reshape(-1, 1)
+test_x = test_data[:, :-1]  # Reshape <strong>train_x</strong> and <strong>train_y</strong>.
+test_y = test_data[:, -1].reshape(-1, 1)
+
+from PIL import Image
+batch_size = 10  # Check 10 samples.
+print(train_y.flatten()[:batch_size].tolist())
+batch_img = train_x[0].reshape(28, 28)
+for i in range(1, batch_size):
+    batch_img = np.hstack((batch_img, train_x[i].reshape(28, 28)))  # Stack a batch of images horizontally to facilitate display in the next step.
+Image.fromarray(batch_img)
+
+train_x = train_x.astype(np.float) / 255.0
+train_y = train_y.astype(np.float)
+
+test_x = test_x.astype(np.float) / 255.0
+test_y = test_y.astype(np.float)
+
+def load_data_zeros_ones(datasets_dir):
+    import os
+    import numpy as np
+    import torchvision.datasets.mnist as mnist
+
+    # Define the datasets directory
+    datasets_dir = './datasets'
+    if not os.path.exists(datasets_dir):
+        os.makedirs(datasets_dir)  # Create the datasets directory if it doesn't exist
+    # URL of the MNIST dataset zip file
+    mnist_url = 'https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/MNIST_data.zip'
+    zip_file_path = os.path.join(datasets_dir, 'MNIST_data.zip')
+    # Download the MNIST_data.zip file using wget
+    !wget {mnist_url} -O {zip_file_path}
+    # Unzip the downloaded file into the datasets directory
+    !unzip {zip_file_path} -d {datasets_dir}
+    
+    # Read all training samples.
+    train_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-images-idx3-ubyte')).numpy().astype(np.uint8)
+    train_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-labels-idx1-ubyte')).numpy().astype(np.uint8)
+    # Read all test samples.
+    test_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-images-idx3-ubyte')).numpy().astype(np.uint8)
+    test_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-labels-idx1-ubyte')).numpy().astype(np.uint8)
+
+    train_zeros = train_data[train_label == 0]
+    train_ones = train_data[train_label == 1]
+    test_zeros = test_data[test_label == 0]
+    test_ones = test_data[test_label == 1]
+
+    print('Digit 0: Training set scale: ', len(train_zeros), ', Test set scale: ', len(test_zeros))
+    print('Digit 1: Training set scale: ', len(train_ones), ', Test set scale: ', len(test_ones))
+    
+    train_x = np.vstack((train_zeros, train_ones)) # Summarize the samples of digits 0 and 1. <strong>np.vstack</strong> indicates stacking two arrays vertically.
+    train_y = np.array([0] * len(train_zeros) + [1] * len(train_ones)).astype(np.uint8)
+
+    test_x = np.vstack((test_zeros, test_ones))  # Summarize the samples of digits 0 and 1. <strong>np.vstack</strong> indicates stacking two arrays vertically.
+    test_y = np.array([0] * len(test_zeros) + [1] * len(test_ones)).astype(np.uint8)
+    
+    train_x = train_x.reshape(-1, 28*28)  # Reshape each sample into a row vector to facilitate calculation.
+    train_y = train_y.reshape(-1, 1)
+
+    test_x = test_x.reshape(-1, 28*28)  # Reshape each sample into a row vector to facilitate calculation.
+    test_y = test_y.reshape(-1, 1)
+    
+    train_data = np.hstack((train_x, train_y))  # <strong>np.hstack</strong> indicates stacking two arrays horizontally.
+    test_data = np.hstack((test_x, test_y))  # <strong>np.hstack</strong> indicates stacking two arrays horizontally.
+    np.random.seed(0)
+    np.random.shuffle(train_data)  # Shuffle the rows of the <strong>train_data</strong> array.
+    np.random.shuffle(test_data)  # Shuffle the rows of the <strong>test_data</strong> array.
+    train_x = train_data[:, :-1]  # Reshape <strong>train_x</strong> and <strong>train_y</strong>.
+    train_y = train_data[:, -1].reshape(-1, 1)
+    test_x = test_data[:, :-1]  # Reshape <strong>train_x</strong> and <strong>train_y</strong>.
+    test_y = test_data[:, -1].reshape(-1, 1)
+    
+    train_x = train_x.astype(np.float) / 255.0
+    train_y = train_y.astype(np.float)
+
+    test_x = test_x.astype(np.float) / 255.0
+    test_y = test_y.astype(np.float)
+
+    return train_x, train_y, test_x, test_y
+
+np.random.seed(0)
+
+class Network(object):
+    def __init__(self, num_of_weights):
+        self.w = np.random.randn(num_of_weights, 1)  # Use <strong>np.random.randn</strong> to randomly generate a column vector <strong>num_of_weights*1</strong>. The vector is the weight W.
+        self.b = 0.
+    
+    def forward(self, x):  # Implement the weighted sum function unit and nonlinear function unit by defining a calculation process.
+        z = np.dot(x, self.w) + self.b  # Weighted sum
+        pred_y = 1.0 / (1.0 + np.exp(-z))  # Nonlinear function sigmoid
+        return pred_y
+
+net1 = Network(28*28)
+sample = train_x[0]
+true_y = train_y[0]
+pred_y_1 = net1.forward(sample)
+print('true_y:', true_y, 'pred_y:', pred_y_1)
+
+net2 = Network(28*28)
+sample = train_x[0]
+true_y = train_y[0]
+pred_y_2 = net2.forward(sample)
+print('true_y:', true_y, 'pred_y:', pred_y_2)
+
+loss1 = (pred_y_1 - true_y)**2
+loss2 = (pred_y_2 - true_y)**2
+print('loss1:', loss1, 'loss2:', loss2)
+
+class Network(object):
+    def __init__(self, num_of_weights):
+        np.random.seed(0)
+        self.w = np.random.randn(num_of_weights, 1)  # Use <strong>np.random.randn</strong> to randomly generate a column vector <strong>num_of_weights*1</strong>. The vector is the weight W.
+        self.b = 0.
+    
+    def forward(self, x):  # Implement the weighted sum function unit and nonlinear function unit by defining a calculation process.
+        z = np.dot(x, self.w) + self.b  # Weighted sum
+        pred_y = 1.0 / (1.0 + np.exp(-z))  # Nonlinear function sigmoid
+        return pred_y
+
+    def loss_fun(self, pred_y, true_y):
+        """
+        pred_y: a column vector composed of the predicted values of a batch of samples by the network.
+        true_y: true labels of a batch of samples.
+        """
+        error = pred_y - true_y
+        num_samples = error.shape[0]
+        cost = error * error
+        cost = np.sum(cost) / num_samples
+        return cost
+
+net3 = Network(28*28)
+sample = train_x[0:10]
+true_y = train_y[0:10]
+pred_y = net3.forward(sample)
+print('loss:', net3.loss_fun(pred_y, true_y))
+
+class Network(object):
+    def __init__(self, num_of_weights):
+        np.random.seed(0)
+        self.w = np.random.randn(num_of_weights, 1)  # Use <strong>np.random.randn</strong> to randomly generate a column vector <strong>num_of_weights*1</strong>. The vector is the weight W.
+        self.b = 0.
+    
+    def forward(self, x):  # Implement the weighted sum function unit and nonlinear function unit by defining a calculation process.
+        z = np.dot(x, self.w) + self.b  # Weighted sum
+        pred_y = 1.0 / (1.0 + np.exp(-z))  # Nonlinear function sigmoid
+        return pred_y
+
+    def loss_fun(self, pred_y, true_y):
+        """
+        pred_y: a column vector composed of the predicted values of a batch of samples by the network.
+        true_y: true labels of a batch of samples.
+        """
+        error = pred_y - true_y
+        num_samples = error.shape[0]
+        cost = error * error
+        cost = np.sum(cost) / num_samples
+        return cost
+    
+    def evaluate(self, pred_y, true_y, threshold=0.5):
+        pred_y[pred_y < threshold] = 0  # If the predicted value is less than 0.5, the digit is classified as 0.
+        pred_y[pred_y >= threshold] = 1
+
+        acc = (pred_y == true_y).float().mean()
+        return acc
+
+class Network(object):
+    def __init__(self, num_of_weights):
+        np.random.seed(0)
+        self.w = np.random.randn(num_of_weights, 1)  # Use <strong>np.random.randn</strong> to randomly generate a column vector <strong>num_of_weights*1</strong>. The vector is the weight W.
+        self.b = 0.
+    
+    def forward(self, x):  # Implement the weighted sum function unit and nonlinear function unit by defining a calculation process.
+        z = np.dot(x, self.w) + self.b  # Weighted sum
+        pred_y = 1.0 / (1.0 + np.exp(-z))  # Nonlinear function sigmoid
+        return pred_y
+
+    def loss_fun(self, pred_y, true_y):
+        """
+        pred_y: a column vector composed of the predicted values of a batch of samples by the network.
+        true_y: true labels of a batch of samples.
+        """
+        error = pred_y - true_y
+        num_samples = error.shape[0]
+        cost = error * error
+        cost = np.sum(cost) / num_samples
+        return cost
+    
+    def evaluate(self, pred_y, true_y, threshold=0.5):
+        pred_y[pred_y < threshold] = 0  # If the predicted value is less than 0.5, the digit is classified as 0.
+        pred_y[pred_y >= threshold] = 1
+
+        acc = (pred_y == true_y).float().mean()
+        return acc
+    
+    def gradient(self, x, y, pred_y):
+        gradient_w = (pred_y-y)*pred_y*(1-pred_y)*x
+        gradient_w = np.mean(gradient_w, axis=0)
+        gradient_w = gradient_w[:, np.newaxis]
+        gradient_b = (pred_y - y)*pred_y*(1-pred_y)
+        gradient_b = np.mean(gradient_b)        
+        return gradient_w, gradient_b
+    
+    def update(self, gradient_w, gradient_b, eta = 0.01):
+        self.w = self.w - eta * gradient_w
+        self.b = self.b - eta * gradient_b
+
+class Network(object):
+    def __init__(self, num_of_weights):
+        np.random.seed(0)
+        self.w = np.random.randn(num_of_weights, 1)  # Use <strong>np.random.randn</strong> to randomly generate a column vector <strong>num_of_weights*1</strong>. The vector is the weight W.
+        self.b = 0.
+    
+    def forward(self, x):  # Implement the weighted sum function unit and nonlinear function unit by defining a calculation process.
+        z = np.dot(x, self.w) + self.b  # Weighted sum
+        pred_y = 1.0 / (1.0 + np.exp(-z))  # Nonlinear function sigmoid
+        return pred_y
+
+    def loss_fun(self, pred_y, true_y):
+        """
+        pred_y: a column vector composed of the predicted values of a batch of samples by the network.
+        true_y: true labels of a batch of samples.
+        """
+        error = pred_y - true_y
+        num_samples = error.shape[0]
+        cost = error * error
+        cost = np.sum(cost) / num_samples
+        return cost
+    
+    def evaluate(self, pred_y, true_y, threshold=0.5):
+        pred_y[pred_y < threshold] = 0  # If the predicted value is less than 0.5, the digit is classified as 0.
+        pred_y[pred_y >= threshold] = 1
+
+        acc = np.mean((pred_y == true_y).astype(np.float))
+        return acc
+    
+    def gradient(self, x, y, pred_y):
+        gradient_w = (pred_y-y)*pred_y*(1-pred_y)*x
+        gradient_w = np.mean(gradient_w, axis=0)
+        gradient_w = gradient_w[:, np.newaxis]
+        gradient_b = (pred_y - y)*pred_y*(1-pred_y)
+        gradient_b = np.mean(gradient_b)        
+        return gradient_w, gradient_b
+    
+    def update(self, gradient_w, gradient_b, lr = 0.01):
+        self.w = self.w - lr * gradient_w
+        self.b = self.b - lr * gradient_b
+    
+    def train(self, train_x, train_y, test_x, test_y, max_epochs=100, lr=0.01):
+        train_losses = []
+        test_losses = []
+        train_accs = []
+        test_accs = []
+        for epoch in range(1, max_epochs + 1):
+            pred_y_train = self.forward(train_x)
+            gradient_w, gradient_b = self.gradient(train_x, train_y, pred_y_train)
+            self.update(gradient_w, gradient_b, lr)              
+            if (epoch == 1) or (epoch % 200 == 0):
+                pred_y_test = self.forward(test_x)
+                train_loss = self.loss_fun(pred_y_train, train_y)
+                test_loss = self.loss_fun(pred_y_test, test_y)
+                train_acc = self.evaluate(pred_y_train, train_y)
+                test_acc = self.evaluate(pred_y_test, test_y)
+                print('epoch: %d, train_loss: %.4f, test_loss: %.4f, train_acc: %.4f, test_acc: %.4f' % (epoch, train_loss, test_loss, train_acc, test_acc))
+                train_losses.append(train_loss)
+                test_losses.append(test_loss)
+                train_accs.append(train_acc)
+                test_accs.append(test_acc)
+        return train_losses, test_losses, train_accs, test_accs
+
+import time
+start_time = time.time()
+# Create a network.
+net = Network(28*28)
+max_epochs = 3000
+# Start training.
+train_losses, test_losses, train_accs, test_accs = net.train(train_x, train_y, test_x, test_y, max_epochs=max_epochs, lr=0.01)
+print('cost time: %.1f s' % (time.time() - start_time))
+
+import matplotlib.pyplot as plt
+%matplotlib inline
+
+# Plot the trends of these indicators.
+plot_x = np.arange(0, max_epochs+1, 200)
+plot_y_1 = np.array(train_losses)
+plot_y_2 = np.array(test_losses)
+plot_y_3 = np.array(train_accs)
+plot_y_4 = np.array(test_accs)
+plt.plot(plot_x, plot_y_1)
+plt.plot(plot_x, plot_y_2)
+plt.plot(plot_x, plot_y_3)
+plt.plot(plot_x, plot_y_4)
+plt.show()
+
+LeNet.txt's content
+import os
+import sys
+
+def load_data_all(datasets_dir):
+    import os
+    import torch
+    import numpy as np
+    import torchvision.datasets.mnist as mnist
+
+    # Define the datasets directory
+    datasets_dir = './datasets'
+    if not os.path.exists(datasets_dir):
+        os.makedirs(datasets_dir)  # Create the datasets directory if it doesn't exist
+    # URL of the MNIST dataset zip file
+    mnist_url = 'https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/MNIST_data.zip'
+    zip_file_path = os.path.join(datasets_dir, 'MNIST_data.zip')
+    # Download the MNIST_data.zip file using wget
+    !wget {mnist_url} -O {zip_file_path}
+    # Unzip the downloaded file into the datasets directory
+    !unzip {zip_file_path} -d {datasets_dir}
+        
+    # Read all training sets.
+    train_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-images-idx3-ubyte')).numpy().astype(np.uint8)
+    train_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-labels-idx1-ubyte')).numpy().astype(np.uint8)
+    # Read all test sets.
+    test_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-images-idx3-ubyte')).numpy().astype(np.uint8)
+    test_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-labels-idx1-ubyte')).numpy().astype(np.uint8)
+
+    print('training set scale:', len(train_data), ',test set scale:', len(test_data))
+
+    train_x = train_data.reshape(-1, 28*28)  # Change each set to a row vector to facilitate calculation.
+    train_y = train_label.reshape(-1, 1)
+
+    test_x = test_data.reshape(-1, 28*28)  # Change each set to a row vector to facilitate calculation.
+    test_y = test_label.reshape(-1, 1)
+
+    train_data = np.hstack((train_x, train_y))  # Stack two arrays horizontally.
+    test_data = np.hstack((test_x, test_y))  # Stack two arrays horizontally.
+    np.random.seed(0)
+    np.random.shuffle(train_data)  # Disorder the row sequence of the train_data array.
+    np.random.shuffle(test_data)  # Disorder the row sequence of the test_data array.
+    train_x = train_data[:, :-1]  # Obtain train_x and train_y again.
+    train_y = train_data[:, -1].reshape(-1, 1)
+    test_x = test_data[:, :-1]  # Obtain test_x and test_y again.
+    test_y = test_data[:, -1].reshape(-1, 1)
+
+    train_x = torch.FloatTensor(train_x) / 255.0
+    train_y = torch.LongTensor(train_y).squeeze()
+    test_x = torch.FloatTensor(test_x) / 255.0
+    test_y = torch.LongTensor(test_y).squeeze()
+
+    return train_x, train_y, test_x, test_y
+
+datasets_dir = './datasets'
+train_x, train_y, test_x, test_y = load_data_all(datasets_dir)
+train_x = train_x.view(-1, 1, 28, 28)
+test_x = test_x.view(-1, 1, 28, 28)
+
+import torch
+from torch import nn
+
+class Network(nn.Module):
+    def __init__(self, num_of_weights):
+        torch.manual_seed(0)
+        super().__init__()
+        self.conv1 = nn.Sequential( # input_size=(1*28*28)
+            nn.Conv2d(in_channels=1, out_channels=6, kernel_size=5, stride=1, padding=2), # padding=2 ensures that the input and output sizes are the same. output_size = 6 x 28 x 28
+            nn.ReLU(),  # input_size=(6*28*28)
+            nn.MaxPool2d(kernel_size=2, stride=2))  # output_size=(6*14*14)
+        
+        self.conv2 = nn.Sequential( # input_size=(6*14*14)
+            nn.Conv2d(in_channels=6, out_channels=16, kernel_size=5, stride=1, padding=0),  # output_size=(16*10*10)
+            nn.ReLU(),  # input_size=(16*10*10)
+            nn.MaxPool2d(kernel_size=2, stride=2))  # input_size=(16*5*5)
+        
+        self.fc1 = nn.Sequential(
+            nn.Linear(16 * 5 * 5, 120),
+            nn.ReLU()
+        )
+        
+        self.fc2 = nn.Sequential(
+            nn.Linear(120, 84),
+            nn.ReLU()
+        )
+        
+        self.fc3 = nn.Linear(84, 10)
+    
+    def forward(self, x):
+        """
+        Forward propagation function
+        """
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = x.view(x.size()[0], -1)
+        x = self.fc1(x)
+        x = self.fc2(x)
+        out = self.fc3(x)
+        
+        return out
+        
+    def evaluate(self, pred_y, true_y):
+        """
+        Accuracy statistics function, which is the same as that in the previous section.
+        """
+        pred_labels = torch.argmax(pred_y, dim=1)
+        acc = (pred_labels == true_y).float().mean()
+        return acc
+
+import torch.nn.functional as F
+loss_fun = F.cross_entropy
+
+net = Network(28*28)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+net = net.to(device)
+optimizer = torch.optim.SGD(net.parameters(), lr=0.01)
+
+def train(net, train_x, train_y, test_x, test_y, max_epochs=100):
+    train_losses = []
+    test_losses = []
+    train_accs = []
+    test_accs = []
+    for epoch in range(1, max_epochs + 1):
+        net.train()  # Switch to the training mode.
+        train_x, train_y = train_x.to(device), train_y.to(device)
+        pred_y_train = net.forward(train_x)  # Forward propagation.
+        train_loss = loss_fun(pred_y_train, train_y)  # Calculate the loss.
+
+        # Calculate the gradient and update the weight.
+        train_loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+
+        if (epoch == 1) or (epoch % 200 == 0):
+            net.eval()  # Switch to the evaluation mode, in which the gradient is not calculated so the calculation is faster.
+            test_x, test_y = test_x.to(device), test_y.to(device)
+            pred_y_test = net.forward(test_x)
+            test_loss = loss_fun(pred_y_test, test_y)
+            train_acc = net.evaluate(pred_y_train, train_y)
+            test_acc = net.evaluate(pred_y_test, test_y)
+            print('epoch %d, train_loss %.4f, test_loss %.4f, train_acc: %.4f, test_acc: %.4f' % (epoch, train_loss.item(), test_loss.item(), train_acc, test_acc))
+    return train_losses, test_losses, train_accs, test_accs
+
+import time
+start_time = time.time()
+max_epochs = 3000
+train_losses, test_losses, train_accs, test_accs = train(net, train_x, train_y, test_x, test_y, max_epochs=max_epochs)
+print('cost time: %.1f s' % int(time.time() - start_time))
+
+LinearRegression.txt's content
+# Implement simple linear regression.
+import matplotlib.pyplot as plt # Import the matplotlib library for visualization.
+from matplotlib.font_manager import FontProperties
+import numpy as np
+
+#Input a local font file to prevent garbled characters.
+#font_set = FontProperties(fname=r"./work/ simsun.ttc", size=12)
+# Provide a dataset for training.
+x_train = [4,8,5,10,12]
+y_train = [20,50,30,70,60]
+
+def draw(x_train,y_train):
+    plt.scatter(x_train, y_train)
+
+#Define a function to obtain the slope *w* and intercept *b*.
+#Calculate the slope and intercept using the least squares method, ensuring that the derivative is zero.
+def fit(x_train,y_train): 
+    size = len(x_train)
+    numerator = 0 # Initialize the numerator.
+    denominator = 0# Initialize the denominator.   
+    for i in range(size):
+        numerator += (x_train[i]-np.mean(x_train))*(y_train[i]-np.mean(y_train))
+        denominator +=(x_train[i]-np.mean(x_train))**2
+    w = numerator/denominator
+    b = np.mean(y_train)-w*np.mean(x_train)
+    return w,b
+
+# Input *x* and calculate the output value based on the slope *w* and intercept *b*.
+def predict(x,w,b):  
+    #Use the model for prediction.
+    y = w*x+b
+    return y
+
+def fit_line(w,b):
+#Use the test dataset for testing and draw a plot.
+    x = np.linspace(4,15,9) # Use the linspace function to generate an arithmetic progression.    #numpy.limspace(start,stop,num,endpoint=True,retstep=False,dtype=None,axis=0#)
+    y = w*x+b
+    plt.plot(x,y)
+    plt.show()
+if __name__ =="__main__":
+    draw(x_train,y_train)
+    w,b = fit(x_train,y_train)
+    print(w,b) # Output the slope and intercept.
+fit_line(w,b) # Draw the prediction function plot.
+
+# Implement multiple linear regression.
+# Import modules.
+import numpy as np
+import pandas as pd
+
+#Create an array. The first three columns indicate the independent variable *X*, and the last column indicates the dependent variable *Y*.
+data = np.array([[3, 2, 9, 20],
+                 [4, 10, 2, 72],
+                 [3, 4, 9, 21],
+                 [12, 3, 4, 20]])
+print("data:", data, "\n")
+
+X = data[:, :-1]
+Y = data[:, -1]
+
+X = np.mat(np.c_[np.ones(X.shape[0]), X]) # Add constant term coefficients to the coefficient matrix.
+Y = np.mat(Y) # Convert the array into a matrix.
+
+print("X:", X, "\n")
+print("Y:", Y, "\n")
+
+#Analytical solution for obtaining the optimal parameter vector B using the least squares method (the derivative of the objective function is zero):
+B = np.linalg.inv(X.T * X) * (X.T) * (Y.T)
+print("B:", B, "\n") # Output coefficients. The first term is a constant term, and others are regression coefficients.
+print("1,60,60,60 Prediction result:", np.mat([1, 60, 60, 60]) * B, "\n") # Prediction result
+
+# Related coefficients
+Q_e = 0
+Q_E = 0
+Y_mean = np.mean(Y)
+for i in range(Y.size):
+    Q_e += pow(np.array((Y.T)[i] - X[i] * B), 2)
+    Q_E += pow(np.array(X[i] * B) - Y_mean, 2)
+R2 = Q_E / (Q_e + Q_E)
+print("R2", R2)
+
+from sklearn.linear_model import LinearRegression
+import numpy as np
+model = LinearRegression()
+
+x_train = np.array([[2,4],[5,8],[5,9],[7,10],[9,12]])
+y_train = np.array([20,50,30,70,60])
+
+model.fit(x_train,y_train)
+#fit(x, y, sample_weight=None), where *x* indicates the training dataset, *y* indicates the target value, and **sample_weight** indicates the number of samples
+#coef_coefficient w; intercept_intercept
+print(model.coef_) # Output the coefficient *w*.
+print(model.intercept_) # Output the intercept *b*.
+print(model.score(x_train,y_train)) # Output the training result.
+
+DigitsBinaryClassification.txt's content
+import os
+import numpy as np
+import torchvision.datasets.mnist as mnist
+
+# Define the datasets directory
+datasets_dir = './datasets'
+if not os.path.exists(datasets_dir):
+    os.makedirs(datasets_dir)  # Create the datasets directory if it doesn't exist
+# URL of the MNIST dataset zip file
+mnist_url = 'https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/MNIST_data.zip'
+zip_file_path = os.path.join(datasets_dir, 'MNIST_data.zip')
+# Download the MNIST_data.zip file using wget
+!wget {mnist_url} -O {zip_file_path}
+# Unzip the downloaded file into the datasets directory
+!unzip {zip_file_path} -d {datasets_dir}
+
+# Read all training samples.
+train_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-images-idx3-ubyte')).numpy().astype(np.uint8)
+train_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-labels-idx1-ubyte')).numpy().astype(np.uint8)
+# Read all test samples.
+test_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-images-idx3-ubyte')).numpy().astype(np.uint8)
+test_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-labels-idx1-ubyte')).numpy().astype(np.uint8)
+train_zeros = train_data[train_label == 0]
+train_ones = train_data[train_label == 1]
+test_zeros = test_data[test_label == 0]
+test_ones = test_data[test_label == 1]
+
+print('digit 0: training set scale: ', len(train_zeros), ', test set scale: ', len(test_zeros))
+print('digit 1: training set scale: ', len(train_ones), ', test set scale: ', len(test_ones))
+
+# View 30 images of digit 0.
+import numpy as np
+from PIL import Image
+Image.fromarray(np.hstack(train_zeros[:30]))
+
+# View 30 images of digit 1.
+Image.fromarray(np.hstack(train_ones[:30]))
+
+# View the pixel value of an image.
+import pandas as pd
+df = pd.DataFrame(train_data[1])
+df.style.set_properties(**{'font-size':'6pt'}).background_gradient('Greys')
+
+def calc_nonzero_ratio(img):
+    '''Implementation method: Use the <strong>np.count_nonzero</strong> function to count the number of non-zero pixels in the matrix, and divide the number by the image size to obtain the proportion of non-zero pixels.'''
+    img = np.asarray(img)
+    return np.count_nonzero(img) / img.size
+
+zeros_ratio = 0
+for zero in train_zeros:
+    zeros_ratio += calc_nonzero_ratio(zero)
+zeros_ratio = zeros_ratio / len(train_zeros)
+print ('average proportion of non-zero pixels of digit 0:', zeros_ratio)
+
+ones_ratio = 0
+for one in train_ones:
+    ones_ratio += calc_nonzero_ratio(one)
+ones_ratio = ones_ratio / len(train_ones)
+print('average proportion of non-zero pixels of digit 1:', ones_ratio)
+
+th = round((zeros_ratio + ones_ratio) / 2, 4)
+print('classification threshold:', th)
+
+def predict(img):
+    if calc_nonzero_ratio(img) > th:
+        pred_label = 0
+    else:
+        pred_label = 1
+    return pred_label
+
+zero_right_count = 0
+for zero in test_zeros:
+    pred_result = predict(zero)
+    if pred_result == 0:
+        zero_right_count += 1
+print('accuracy of the prediction for digit 0: %.4f' % (float(zero_right_count) / len(test_zeros)))
+
+one_right_count = 0
+for one in test_ones:
+    pred_result = predict(one)
+    if pred_result == 1:
+        one_right_count += 1
+print('accuracy of the prediction for digit 1: %.4f' % (float(one_right_count) / len(test_ones)))
+
+print('overall accuracy of test samples: %.4f' % (float(zero_right_count + one_right_count) / (len(test_zeros) + len(test_ones))))
+
+ResNet.txt's content
+# Importing the necessary libraries for deep learning and computer vision tasks.
+import torch
+import torch.nn as nn  # Neural network modules
+import torch.optim as optim  # Optimizers for training
+import torchvision  # Library for vision-related tasks
+import torchvision.transforms as transforms  # For data preprocessing
+from torch.utils.data import DataLoader  # For batching and loading datasets
+
+# Defining the BasicBlock used in ResNet. This block consists of two convolutional layers,
+# batch normalization, ReLU activations, and a shortcut (skip connection) for residual learning.
+
+class BasicBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, stride=1):
+        super(BasicBlock, self).__init__()
+        # First convolutional layer with a 3x3 kernel, stride and padding set to 1.
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)  # Batch normalization after the first convolution
+        self.relu = nn.ReLU(inplace=True)  # ReLU activation
+        # Second convolutional layer with a 3x3 kernel, no stride.
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)  # Batch normalization after the second convolution
+
+        # The shortcut connection will adjust dimensions if the input and output channels are different.
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels)  # Apply batch normalization to the shortcut
+            )
+
+    def forward(self, x):
+        # Pass through the first convolutional layer, followed by batch normalization and ReLU activation
+        out = self.relu(self.bn1(self.conv1(x)))
+        # Pass through the second convolutional layer, followed by batch normalization
+        out = self.bn2(self.conv2(out))
+        # Add the shortcut connection (skip connection) to the output
+        out += self.shortcut(x)
+        out = self.relu(out)  # Final ReLU activation
+        return out
+
+# Defining the ResNet architecture, consisting of an initial convolutional layer,
+# followed by four layers of residual blocks. The final fully connected layer 
+# outputs class predictions.
+
+class ResNet(nn.Module):
+    def __init__(self, num_classes=10):
+        super(ResNet, self).__init__()
+        # Initial convolutional layer with a kernel size of 3x3, stride 1, and padding 1
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)  # Batch normalization
+        self.relu = nn.ReLU(inplace=True)  # ReLU activation
+
+        # Create multiple layers of residual blocks using the _make_layer method
+        self.layer1 = self._make_layer(64, 64, 2, stride=1)
+        self.layer2 = self._make_layer(64, 128, 2, stride=2)
+        self.layer3 = self._make_layer(128, 256, 2, stride=2)
+        self.layer4 = self._make_layer(256, 512, 2, stride=2)
+
+        # Global average pooling to reduce the feature map to a single value per channel
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        # Fully connected layer that outputs predictions for the classes
+        self.fc = nn.Linear(512, num_classes)
+
+    # Helper function to create each layer of residual blocks
+    def _make_layer(self, in_channels, out_channels, num_blocks, stride):
+        layers = []
+        layers.append(BasicBlock(in_channels, out_channels, stride))  # First block with stride for downsampling
+        for _ in range(1, num_blocks):  # Subsequent blocks without stride
+            layers.append(BasicBlock(out_channels, out_channels))
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        # Initial convolutional layer followed by batch normalization and ReLU
+        x = self.relu(self.bn1(self.conv1(x)))
+        # Pass through each layer of residual blocks
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        # Apply global average pooling
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)  # Flatten the output for the fully connected layer
+        x = self.fc(x)  # Final output layer
+        return x
+
+# Define the transformation to normalize the images and convert them to tensors
+transform = transforms.Compose([
+    transforms.ToTensor(),  # Convert image to PyTorch Tensor
+    transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # Normalize the images
+])
+
+# Load the CIFAR-10 dataset for training and testing with the above transformations
+trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
+trainloader = DataLoader(trainset, batch_size=64, shuffle=True)  # Load data in batches
+
+testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
+testloader = DataLoader(testset, batch_size=64, shuffle=False)  # Load test data
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Function to display an image
+def imshow(img):
+    img = img / 2 + 0.5  # Unnormalize the image back to [0, 1] range
+    npimg = img.numpy()  # Convert the tensor to a NumPy array for plotting
+    plt.imshow(np.transpose(npimg, (1, 2, 0)))  # Rearrange the dimensions for visualization
+    plt.show()
+
+# Get a batch of images from the training set
+dataiter = iter(trainloader)
+images, labels = dataiter.next()
+
+# Display the images in the batch
+imshow(torchvision.utils.make_grid(images))
+
+# Initialize the ResNet model with 10 output classes (CIFAR-10 has 10 classes)
+model = ResNet(num_classes=10).cuda()
+
+# Define the loss function (cross-entropy loss) for multi-class classification
+criterion = nn.CrossEntropyLoss()
+
+# Set up the optimizer (Adam optimizer with learning rate of 0.001)
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+# Training the ResNet model for 10 epochs
+num_epochs = 10
+
+for epoch in range(num_epochs):
+    model.train()  # Set the model to training mode
+    running_loss = 0.0  # Track the loss for the current epoch
+
+    # Iterate over the batches of training data
+    for inputs, labels in trainloader:
+        optimizer.zero_grad()  # Zero the gradients from the previous step
+
+        # Forward pass: Compute the output of the model
+        inputs = inputs.cuda()
+        labels = labels.cuda()
+        outputs = model(inputs)
+
+        # Compute the loss
+        loss = criterion(outputs, labels)
+
+        # Backward pass: Compute the gradients
+        loss.backward()
+
+        # Update the model parameters
+        optimizer.step()
+
+        # Update the running loss
+        running_loss += loss.item()
+
+    # Print the loss for the current epoch
+    print(f"Epoch {epoch+1}/{num_epochs}, Loss: {running_loss / len(trainloader)}")
+
+# Evaluate the model on the test set
+model.eval()  # Set the model to evaluation mode
+correct = 0
+total = 0
+
+with torch.no_grad():  # Disable gradient calculation for evaluation
+    for inputs, labels in testloader:
+        inputs = inputs.cuda()
+        labels = labels.cuda()
+        outputs = model(inputs)
+        _, predicted = torch.max(outputs, 1)  # Get the predicted class
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
+
+# Calculate the accuracy of the model on the test set
+accuracy = 100 * correct / total
+print(f"Test Accuracy: {accuracy:.2f}%")
+
+BinaryModel10ClassClassification.txt's content
+import os
+import torch
+import numpy as np
+import torchvision.datasets.mnist as mnist
+
+# Define the datasets directory
+datasets_dir = './datasets'
+if not os.path.exists(datasets_dir):
+    os.makedirs(datasets_dir)  # Create the datasets directory if it doesn't exist
+# URL of the MNIST dataset zip file
+mnist_url = 'https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/MNIST_data.zip'
+zip_file_path = os.path.join(datasets_dir, 'MNIST_data.zip')
+# Download the MNIST_data.zip file using wget
+!wget {mnist_url} -O {zip_file_path}
+# Unzip the downloaded file into the datasets directory
+!unzip {zip_file_path} -d {datasets_dir}
+    
+# Read all training sets.
+train_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-images-idx3-ubyte')).numpy().astype(np.uint8)
+train_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-labels-idx1-ubyte')).numpy().astype(np.uint8)
+# Read all test sets.
+test_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-images-idx3-ubyte')).numpy().astype(np.uint8)
+test_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-labels-idx1-ubyte')).numpy().astype(np.uint8)
+
+print('training set scale:', len(train_data), ',test set scale:', len(test_data))
+
+train_x = train_data.reshape(-1, 28*28)  # Change each set to a row vector to facilitate calculation.
+train_y = train_label.reshape(-1, 1)
+
+test_x = test_data.reshape(-1, 28*28)  # Change each set to a row vector to facilitate calculation.
+test_y = test_label.reshape(-1, 1)
+
+train_data = np.hstack((train_x, train_y))  # Stack two arrays horizontally.
+test_data = np.hstack((test_x, test_y))  # Stack two arrays horizontally.
+np.random.seed(0)
+np.random.shuffle(train_data)  # Disorder the row sequence of the train_data array.
+np.random.shuffle(test_data)  # Disorder the row sequence of the test_data array.
+train_x = train_data[:, :-1]  # Obtain train_x and train_y again.
+train_y = train_data[:, -1].reshape(-1, 1)
+test_x = test_data[:, :-1]  # Obtain test_x and test_y again.
+test_y = test_data[:, -1].reshape(-1, 1)
+
+from PIL import Image
+batch_size = 10  # View 10 sets.
+print(train_y[:batch_size].tolist())
+batch_img = train_x[0].reshape(28, 28)
+for i in range(1, batch_size):
+    batch_img = np.hstack((batch_img, train_x[i].reshape(28, 28)))  # Stack images horizontally to facilitate display in the next step.
+Image.fromarray(batch_img)
+
+train_x = torch.FloatTensor(train_x) / 255.0
+train_y = torch.LongTensor(train_y).squeeze()  # Change train_y to a vector.
+test_x = torch.FloatTensor(test_x) / 255.0
+test_y = torch.LongTensor(test_y).squeeze()  # Change test_y to a vector.
+
+def load_data_all(datasets_dir):
+    import os
+    import torch
+    import numpy as np
+    import torchvision.datasets.mnist as mnist
+
+    # Define the datasets directory
+    datasets_dir = './datasets'
+    if not os.path.exists(datasets_dir):
+        os.makedirs(datasets_dir)  # Create the datasets directory if it doesn't exist
+    # URL of the MNIST dataset zip file
+    mnist_url = 'https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/MNIST_data.zip'
+    zip_file_path = os.path.join(datasets_dir, 'MNIST_data.zip')
+    # Download the MNIST_data.zip file using wget
+    !wget {mnist_url} -O {zip_file_path}
+    # Unzip the downloaded file into the datasets directory
+    !unzip {zip_file_path} -d {datasets_dir}
+        
+    # Read all training sets.
+    train_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-images-idx3-ubyte')).numpy().astype(np.uint8)
+    train_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-labels-idx1-ubyte')).numpy().astype(np.uint8)
+    # Read all test sets.
+    test_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-images-idx3-ubyte')).numpy().astype(np.uint8)
+    test_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-labels-idx1-ubyte')).numpy().astype(np.uint8)
+
+    print('training set scale:', len(train_data), ',test set scale:', len(test_data))
+
+    train_x = train_data.reshape(-1, 28*28)  # Change each set to a row vector to facilitate calculation.
+    train_y = train_label.reshape(-1, 1)
+
+    test_x = test_data.reshape(-1, 28*28)  # Change each set to a row vector to facilitate calculation.
+    test_y = test_label.reshape(-1, 1)
+
+    train_data = np.hstack((train_x, train_y))  # Stack two arrays horizontally.
+    test_data = np.hstack((test_x, test_y))  # Stack two arrays horizontally.
+    np.random.seed(0)
+    np.random.shuffle(train_data)  # Disorder the row sequence of the train_data array.
+    np.random.shuffle(test_data)  # Disorder the row sequence of the test_data array.
+    train_x = train_data[:, :-1]  # Obtain train_x and train_y again.
+    train_y = train_data[:, -1].reshape(-1, 1)
+    test_x = test_data[:, :-1]  # Obtain test_x and test_y again.
+    test_y = test_data[:, -1].reshape(-1, 1)
+
+    train_x = torch.FloatTensor(train_x) / 255.0
+    train_y = torch.LongTensor(train_y).squeeze()
+    test_x = torch.FloatTensor(test_x) / 255.0
+    test_y = torch.LongTensor(test_y).squeeze()
+
+    return train_x, train_y, test_x, test_y
+
+from torch import nn
+
+class Network(nn.Module):
+    def __init__(self, num_of_weights):
+        torch.manual_seed(0)
+        super().__init__()
+        self.fc = nn.Linear(in_features=num_of_weights, out_features=10, bias=True)  # Define a fully connected layer.
+        self.nonlinearity = nn.Sigmoid()
+    
+    def forward(self, x):  # Define a calculation process to implement a weighted summation unit and a non-linear function unit.
+        z = self.fc(x)
+        pred_y = self.nonlinearity(z)
+        return pred_y
+   
+    def evaluate(self, pred_y, true_y):
+        pred_labels = torch.argmax(pred_y, dim=1)
+        acc = (pred_labels == true_y).float().mean()
+        return acc
+
+import torch.nn.functional as F
+loss_fun = F.cross_entropy
+
+net = Network(28*28)
+optimizer = torch.optim.SGD(net.parameters(), lr=0.01)
+
+def train(net, train_x, train_y, test_x, test_y, max_epochs=100):
+    train_losses = []
+    test_losses = []
+    train_accs = []
+    test_accs = []
+    for epoch in range(1, max_epochs + 1):
+        net.train()  # Switch to the training mode.
+        pred_y_train = net.forward(train_x)  # forward propagation
+        train_loss = loss_fun(pred_y_train, train_y)  # Calculate the loss.
+
+        # Calculate the gradient and update the weight.
+        train_loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+
+        if (epoch == 1) or (epoch % 200 == 0):
+            net.eval()  # Switch to the evaluation mode, in which the gradient is not calculated so the calculation is faster.
+            pred_y_test = net.forward(test_x)
+            test_loss = loss_fun(pred_y_test, test_y)
+            train_acc = net.evaluate(pred_y_train, train_y)
+            test_acc = net.evaluate(pred_y_test, test_y)
+            print('epoch %d, train_loss %.4f, test_loss %.4f, train_acc: %.4f, test_acc: %.4f' % (epoch, train_loss.item(), test_loss.item(), train_acc, test_acc))
+    return train_losses, test_losses, train_accs, test_accs
+
+import time
+start_time = time.time()
+max_epochs = 3000
+train_losses, test_losses, train_accs, test_accs = train(net, train_x, train_y, test_x, test_y, max_epochs=max_epochs)
+print('cost time: %.1f s' % (time.time() - start_time))
+
+DigitsKmean.txt's content
+# Import the required modules.
+import numpy as np
+import matplotlib.pyplot as plt
+
+from sklearn.datasets import load_digits
+from sklearn.preprocessing import scale
+
+from sklearn.model_selection import train_test_split
+from sklearn import cluster
+
+# Import the handwritten digit image data, digits.data,digits.images, digits.target
+digits = load_digits()
+print(digits.images.shape)
+print(digits.images[0])
+print(digits.data.shape)
+print(digits.data[0])
+
+# Preprocess the image data and convert the data into standard normal distribution (the average value is <strong>0</strong> and the variance is <strong>1</strong>).
+data = scale(digits.data)
+print(data.shape)
+print(data[0])
+
+# Define the function for printing handwritten digit images.
+#    images: image data
+#    y: label data
+#    max_n: maximum number of images to be printed
+def print_digits(images, y, max_n=10):
+    # set up the figure size in inches
+    fig = plt.figure(figsize=(12, 12))
+    fig.subplots_adjust(left=0, right=1, bottom=0, top=1, hspace=0.05, wspace=0.05)
+    i = 0
+    while i < max_n and i < images.shape[0]:
+        # plot the images in a matrix of 20x20
+        p = fig.add_subplot(20, 20, i + 1, xticks=[], yticks=[])
+        p.imshow(images[i], cmap=plt.cm.bone)
+        # label the image with the target value
+        p.text(0, 14, str(y[i]))
+        i = i + 1
+
+
+# Print 10 images in the dataset obtained through load_digits().
+print_digits(digits.images, digits.target, max_n=10)
+
+# Use train_test_split to split training data and test data.
+X_train, X_test, y_train, y_test, images_train, images_test = train_test_split(data, digits.target, digits.images,
+                                                                               test_size=0.25, random_state=42)
+
+n_samples, n_features = X_train.shape # n_samples: training sample size; n_features: feature dimension
+n_digits = len(np.unique(y_train)) # n_digits: number of original categories
+labels = y_train # labels: original label
+
+# Use cluster.KMeans to perform cluster analysis on training data.
+#     init: mode for selecting the initial value of the cluster center
+#     n_clusters: number of clusters
+#     random_state: integer or numpy.RandomState type, which can be used to initialize the centroid generator.
+clf = cluster.KMeans(init='k-means++', n_clusters=10, random_state=42)
+clf.fit(X_train) # clf.labels_ corresponds to the category ID of each sample after clustering.
+# Print handwritten digit images after clustering.
+print_digits(images_train, clf.labels_, max_n=10)
+
+# Define the function for printing clustering results.
+#     images: image data
+#     label: clustering result ID
+#     cluster_number: clustering result ID
+def print_cluster(images, label, cluster_number):
+    images = images[label == cluster_number]
+    label = label[label == cluster_number]
+    print_digits(images, label, max_n=10)
+
+
+for i in range(10):
+    print_cluster(images_train, clf.labels_, i)

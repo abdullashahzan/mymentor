@@ -1,0 +1,211 @@
+apt-get update
+
+apt -y install docker.io
+
+import torch
+print(torch.__version__)
+
+!pip install transformers
+
+import transformers
+
+mkdir -p ~/custom-image/trainjob
+cd ~/custom-image/trainjob
+
+wget https://sandbox-experiment-files.obs.cn-north-4.myhuaweicloud.com:443/lab2024/20221019/trainjob_image.zip
+
+unzip trainjob_image.zip
+
+ls trainjob_image
+
+#The container image building host needs to connect to the public network.
+
+# Basic container image, https://github.com/NVIDIA/nvidia-docker/wiki/CUDA
+# 
+# https://docs.docker.com/develop/develop-images/multistage-build/#use-multi-stage-builds
+# require Docker Engine >= 17.05
+#
+# builder stage
+FROM nvidia/cuda:10.2-runtime-ubuntu18.04 AS builder
+
+# The default user of the basic container image is root.
+# USER root
+
+# Use the pypi configuration provided by Huawei open-source image site.
+RUN mkdir -p /root/.pip/
+COPY pip.conf /root/.pip/pip.conf
+
+# Copy the installation file to the /tmp directory in the basic container image.
+COPY Miniconda3-py37_4.12.0-Linux-x86_64.sh /tmp
+COPY torch-1.8.1+cu102-cp37-cp37m-linux_x86_64.whl /tmp
+COPY torchvision-0.9.1+cu102-cp37-cp37m-linux_x86_64.whl /tmp
+COPY torchaudio-0.8.1-cp37-cp37m-linux_x86_64.whl /tmp
+
+# https://conda.io/projects/conda/en/latest/user-guide/install/linux.html#installing-on-linux
+# Install Miniconda3 in the /home/ma-user/miniconda3 directory of the basic container image.
+RUN bash /tmp/Miniconda3-py37_4.12.0-Linux-x86_64.sh -b -p /home/ma-user/miniconda3
+
+# Install torch*.whl in the default python environment (/home/ma-user/miniconda3/bin/pip) of Miniconda3.
+RUN cd /tmp && \
+    /home/ma-user/miniconda3/bin/pip install --no-cache-dir \
+    /tmp/torch-1.8.1+cu102-cp37-cp37m-linux_x86_64.whl \
+    /tmp/torchvision-0.9.1+cu102-cp37-cp37m-linux_x86_64.whl \
+    /tmp/torchaudio-0.8.1-cp37-cp37m-linux_x86_64.whl
+
+# Build the final container image
+FROM nvidia/cuda:10.2-runtime-ubuntu18.04
+
+# Installing the vim/curl tool (using Huawei open source image sites)
+RUN cp -a /etc/apt/sources.list /etc/apt/sources.list.bak && \
+    sed -i "s@http://.*archive.ubuntu.com@http://repo.huaweicloud.com@g" /etc/apt/sources.list && \
+    sed -i "s@http://.*security.ubuntu.com@http://repo.huaweicloud.com@g" /etc/apt/sources.list && \
+    apt-get update && \
+    apt-get install -y vim curl && \
+    apt-get clean && \
+    mv /etc/apt/sources.list.bak /etc/apt/sources.list
+
+# To add a ma-user user (uid = 1000, gid = 100), run the following command:
+# Note that the basic container image already has a group with gid = 100, so the ma-user user can directly use it.
+RUN useradd -m -d /home/ma-user -s /bin/bash -g 100 -u 1000 ma-user
+
+# Copy the /home/ma-user/miniconda3 directory from the builder stage to the directory with the same name as the current container image.
+COPY --chown=ma-user:100 --from=builder /home/ma-user/miniconda3 /home/ma-user/miniconda3
+
+# Setting the Preconfigured Environment Variables for Container Images
+# Set PYTHONUNBUFF:00-20:00=1 to avoid log loss.
+ENV PATH=$PATH:/home/ma-user/miniconda3/bin \
+    PYTHONUNBUFFERED=1
+
+# Setting the Default User and Working Directory of the Container Image
+USER ma-user
+WORKDIR /home/ma-user
+
+cd trainjob_image
+ll
+
+vim Dockerfile
+
+# builder stage
+FROM swr.cn-north-4.myhuaweicloud.com/deep-learning-cloud/cuda:11.1.1-runtime-ubuntu18.04 AS builder
+
+# Build the final container image
+FROM swr.cn-north-4.myhuaweicloud.com/deep-learning-cloud/cuda:11.1.1-runtime-ubuntu18.04
+
+docker build . -t pytorch_trainjob:1.8.1-cuda10.2
+
+docker tag pytorch_trainjob:1.8.1-cuda10.2 swr.ap-southeast-3.myhuaweicloud.com/deep-learning-dcyang/pytorch_trainjob:1.8.1-cuda10.2
+
+docker push swr.ap-southeast-3.myhuaweicloud.com/deep-learning-dcyang/pytorch_trainjob:1.8.1-cuda10.2
+
+vim verification.py
+
+import torch
+import torch.nn as nn
+
+x = torch.randn(5, 3)
+print(x)
+
+available_dev = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+y = torch.randn(5, 3).to(available_dev)
+print(y)
+
+python verification.py
+
+mkdir -p ~/custom-image/infer
+cd ~/custom-image/infer
+
+docker pull swr.cn-north-4.myhuaweicloud.com/deep-learning-cloud/ubuntu:18.04
+
+vim test_app.py
+
+from flask import Flask, request
+import json 
+app = Flask(__name__)
+
+@app.route('/greet', methods=['POST'])
+def say_hello_func():
+    print("----------- in hello func ----------")
+    data = json.loads(request.get_data(as_text=True))
+    print(data)
+    username = data['name']
+    rsp_msg = 'Hello, {}!'.format(username)
+    return json.dumps({"response":rsp_msg}, indent=4)
+
+@app.route('/goodbye', methods=['GET'])
+def say_goodbye_func():
+    print("----------- in goodbye func ----------")
+    return '\nGoodbye!\n'
+
+@app.route('/', methods=['POST'])
+def default_func():
+    print("----------- in default func ----------")
+    data = json.loads(request.get_data(as_text=True))
+    return '\n called default func !\n {} \n'.format(str(data))
+
+# host must be "0.0.0.0", port must be 8080
+if __name__ == '__main__':
+    app.run(host="0.0.0.0", port=8080)
+
+vim Dockerfile
+
+From ubuntu:18.04
+# Configure the source of HUAWEI CLOUD and install python, python3-pip, and Flask.
+RUN cp -a /etc/apt/sources.list /etc/apt/sources.list.bak && \
+  sed -i "s@http://.*security.ubuntu.com@http://repo.huaweicloud.com@g" /etc/apt/sources.list && \
+  sed -i "s@http://.*archive.ubuntu.com@http://repo.huaweicloud.com@g" /etc/apt/sources.list && \
+  apt-get update && \
+  apt-get install -y python3 python3-pip && \
+  pip3 install  --trusted-host https://repo.huaweicloud.com -i https://repo.huaweicloud.com/repository/pypi/simple Flask
+
+# Copy the application service code to the image.
+COPY test_app.py /opt/test_app.py
+
+# Specifies the boot command for the image.
+CMD python3  /opt/test_app.py
+
+docker build -t test:v1 .
+
+docker run -it -p 8080:8080 test:v1
+
+curl -X POST -H "Content-Type: application/json" --data '{"name":"Tom"}'  127.0.0.1:8080/
+curl -X POST -H "Content-Type: application/json" --data '{"name":"Tom"}' 127.0.0.1:8080/greet
+curl -X GET 127.0.0.1:8080/goodbye
+
+docker tag test:v1 swr.ap-southeast-3.myhuaweicloud.com/deep-learning-dcyang/test:v1
+
+docker push swr.ap-southeast-3.myhuaweicloud.com/deep-learning-dcyang/test:v1
+
+[{
+        "url": "/",
+        "method": "post",
+        "request": {
+            "Content-type": "application/json"
+        },
+        "response": {
+            "Content-type": "application/json"
+        }
+    },
+{
+        "url": "/greet",
+        "method": "post",
+        "request": {
+            "Content-type": "application/json"
+        },
+        "response": {
+            "Content-type": "application/json"
+        }
+    },
+{
+        "url": "/goodbye",
+        "method": "get",
+        "request": {
+            "Content-type": "application/json"
+        },
+        "response": {
+            "Content-type": "application/json"
+        }
+    }
+]
+
+{"hello": "my name is modelarts"}
+

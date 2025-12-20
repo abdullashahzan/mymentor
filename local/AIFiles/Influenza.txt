@@ -1,0 +1,337 @@
+# download dish data
+wget https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com:443/lab2024/Influenza_Patient_Tracing/covid-19-track-v2-en.tar.gz
+
+# decompression of dish data
+tar -zxvf covid-19-track-v2-en.tar.gz
+
+!wget https://obs-aigallery-zc.obs.cn-north-4.myhuaweicloud.com/GES/ges4jupyter/beta/ges4jupyter.py
+!wget https://obs-aigallery-zc.obs.cn-north-4.myhuaweicloud.com/GES/ges4jupyter/beta/ges4jupyter.html
+
+from ges4jupyter import GESConfig, GES4Jupyter, read_csv_config
+eip = 'External access address IP, please change it yourself'
+project_id = 'Project ID, please change it yourself'
+graph_name = 'Graph name, please change it yourself'
+iam_url = 'iam.ap-southeast-3.myhuaweicloud.com'
+domain_name = 'IAM account name, please change it yourself'
+user_name = 'IAM username, please change it yourself'
+password = 'IAM password, please change it yourself'
+project_name = 'ap-southeast-3'
+port = 443  # If the HTTPS security mode is disabled, the value is 80.
+config = GESConfig(eip, project_id, graph_name, 
+                    iam_url = iam_url, 
+                    user_name = user_name, 
+                    password = password, 
+                    domain_name = domain_name,
+                    project_name = project_name,
+                    port = port)
+ges_util = GES4Jupyter(config, True)
+
+print('Start creating vertex index: ')
+job_id = ges_util.build_vertex_index()
+job_result = ges_util.get_job(job_id)
+if 'errorCode' not in job_result:
+    for i in range(100):
+        if job_result['status'] == 'success':
+            break
+        else:
+            time.sleep(1)
+            job_result = ges_util.get_job(job_id)
+print('Creat vertex index complete! ')
+
+print('Start creating edge index: ')
+job_id = ges_util.build_edge_index()
+job_result = ges_util.get_job(job_id)
+if 'errorCode' not in job_result:
+    for i in range(100):
+        if job_result['status'] == 'success':
+            break
+        else:
+            time.sleep(1)
+            job_result = ges_util.get_job(job_id)
+print('Creat edge index complete! ')
+
+import json
+print('Statistics: ')
+result = ges_util.summary()
+format_result = json.dumps(result, indent=4)
+print(format_result)
+
+Statistics: 
+{
+    "vertexNum": 863,
+    "labelDetails": {
+        "labelInVertex": {
+            "city": 8,
+            "patient": 287,
+            "place": 566,
+            "vehicle": 2
+        },
+        "labelInEdge": {
+            "take": 4,
+            "work": 77,
+            "reside": 273,
+            "comfirm": 287,
+            "relation": 72,
+            "stay": 661
+        }
+    },
+    "edgeNum": 1374
+}
+
+cypher_result = ges_util.cypher_query("match (n)-[r]->(m) return n,r,m limit 10",formats=['row','graph']);
+ges_util.format_cypher_result(cypher_result)
+
+print('Check the protection policies of each city: ')
+statement = "match (m:city) return id(m), m.policy"
+result = ges_util.cypher_query(statement)
+format_result = ges_util.format_cypher_result(result)
+format_result
+
+print('Data Update:')
+print('Check whether the query vertex exists: ')
+vertex_id = 'Beijing Case 40'
+statement = "match (p) where id(p) ='" + vertex_id + "' return p"
+result = ges_util.cypher_query(statement)
+# result
+# len(result['data'])
+if len(result['results'][0]['data']) == 0:
+    print('This vertex does not exist, add it:')
+    label = 'patient'
+    property_name = 'gender'
+    value = 'male'
+    ges_util.add_vertex(vertex_id, label, property_name, value)
+    print('Query the vertex again: ')
+    statement = "match (p) where id(p) ='" + vertex_id + "' return p"
+    result = ges_util.cypher_query(statement)
+    format_vertex_detail = json.dumps(result['results'][0]['data'], indent=4, ensure_ascii=False)
+    print(format_vertex_detail)
+
+    print('Add associated edge: ')
+    source = 'Beijing Case 39'
+    target = 'Beijing Case 40'
+    label = 'relation'
+    property_name = 'type'
+    value = 'Relatives.'
+    ges_util.add_edge(source, target, label, property_name, value)
+    statement = "match (p)-[r]-(m) where id(p)='" + source + "' and id(m)='" + target + "' return r"
+    result = ges_util.cypher_query(statement)
+    format_edge_detail = json.dumps(result['results'][0]['data'], indent=4, ensure_ascii=False)
+    print(format_edge_detail)
+else:
+    print('The vertex exists')
+
+Data Update:
+Check whether the query vertex exists: 
+This vertex does not exist, add it:
+Query the vertex again: 
+[
+    {
+        "row": [
+            {
+                "gender": "male",
+                "age": null
+            }
+        ],
+        "meta": [
+            {
+                "id": "Beijing Case 40",
+                "type": "node",
+                "labels": [
+                    "patient"
+                ]
+            }
+        ]
+    }
+]
+Add associated edge: 
+[
+    {
+        "row": [
+            {
+                "type": "Relatives"
+            }
+        ],
+        "meta": [
+            {
+                "id": "Beijing Case 39-Beijing Case 40-4",
+                "type": "relationship",
+                "label": "relation"
+            }
+        ]
+    }
+]
+
+print('View cities with confirmed cases and sort by number of confirmed cases: ')
+statement = "match (m:city)<-[r:comfirm]-(p:patient) with m, count(p) as patientNum return id(m), patientNum order by patientNum desc"
+result = ges_util.cypher_query(statement)
+format_result = ges_util.format_cypher_result(result)
+format_result
+
+print('The trajectory vertex in the graph database are counted according to the number of confirmed cases involved and sorted from the highest to the lowest number of cases：')
+statement = "match (m:place)<-[s:stay]-(p:patient) with m, count(p) as patientNum return id(m), patientNum order by patientNum desc limit 10"
+result = ges_util.cypher_query(statement)
+format_result = ges_util.format_cypher_result(result)
+format_result
+
+print('View the age composition of patients nationwide and sort by number of people:')
+statement = "match (p:patient) where p.age is not null return p.age, count(*) as m order by m desc limit 10"
+result = ges_util.cypher_query(statement)
+format_result = ges_util.format_cypher_result(result)
+format_result
+
+city_id = 'Shijiazhuang City'
+print('View the number of confirmed cases in {} every day:'.format(city_id))
+statement = "match (p:patient)-[r:comfirm]->(m:city) where id(m)='" + city_id + "' return r.datetime, count(*) order by r.datetime asc"
+result = ges_util.cypher_query(statement)
+format_result = ges_util.format_cypher_result(result)
+format_result
+
+statement = "match (n)-[r]-(m) where id(n)='Hu Yanglin Scenic Area' return n,r,m"
+result = ges_util.cypher_query(statement,formats=['row','graph'])
+ges_util.format_cypher_result(result)
+
+statement = "match (n)-[r]-(m) where id(n)='Ejina Banner Case 1' return n,r,m"
+result = ges_util.cypher_query(statement,formats=['row','graph'])
+ges_util.format_cypher_result(result)
+
+patient_id = 'Ejina Banner Case 1'
+print('View the activity track of {}:'.format(patient_id))
+statement = "match (p:patient)-[r]->(m:place) where id(p)='" + patient_id + "' return id(p), r.datetime, type(r), id(m) order by r.datetime asc"
+result = ges_util.cypher_query(statement)
+format_result = ges_util.format_cypher_result(result)
+format_result
+
+patient_id = 'Ejina Banner Case 1'
+print('View patients directly associated with {}:'.format(patient_id))
+print('Either visited a location at the same time:')
+statement = "match path = (p:patient)-[r1]-(m:place)-[r2]-(n:patient) where id(p)='" + patient_id + "' and id(p) <> id(n) and r1.datetime = r2.datetime return id(p), id(m), id(n), r1.datetime, path"
+result = ges_util.cypher_query(statement,formats=['row','graph'])
+format_result = ges_util.format_cypher_result(result)
+format_result
+
+print('Either some kind of intimacy:')
+patient_id = 'Ejina Banner Case 1'
+statement = "match path = (p:patient)-[r]-(n:patient) where id(p)='" + patient_id + "' return id(p), id(n), r.type, path"
+result = ges_util.cypher_query(statement,formats=['row','graph'])
+format_result = ges_util.format_cypher_result(result)
+format_result
+
+statement = "match path=(p:patient)-[]-(m:city) where id(m)='Ejina Banner' and not (tostring(id(p)) contains 'Ejina Banner') return path"
+statement += " union match path=(p:patient)-[]-(m:city) where id(m)='Beijing' and not (tostring(id(p)) contains 'Beijing') return path"
+result = ges_util.cypher_query(statement,formats=['row','graph'])
+ges_util.format_cypher_result(result)
+
+import copy
+statement = "match (p:patient)-[r:comfirm]-(m:city) where id(m)='Beijing' return collect(distinct id(p))"
+result = ges_util.cypher_query(statement)
+print('All patients in Beijing:')
+vertex_list = result["results"][0]['data'][0]['row'][0]
+print(vertex_list)
+print('Check out the possible transmission chain of this round of illness into Beijing:')
+source = 'Ejina Banner'
+chain_vid = []
+for vid in vertex_list:
+    target = vid
+    avoid_ids = copy.deepcopy(vertex_list)
+    avoid_ids.remove(vid)
+    result = ges_util.filtered_shortest_path(source, target, avoid_ids)
+    if len(result) != 0:
+        chain_vid.append(target)
+        path = ''
+        for vtx_id in result:
+            path = path + vtx_id + '-'
+        print(path[:-1])
+
+All patients in Beijing:
+['Beijing Case 1', 'Beijing Case 2', 'Beijing Case 3', 'Beijing Case 4', 'Beijing Case 5', 'Beijing Case 6', 'Beijing Case 7', 'Beijing Case 8', 'Beijing Case 9', 'Beijing Case 10', 'Beijing Case 11', 'Beijing Case 12', 'Beijing Case 13', 'Beijing Case 14', 'Beijing Case 15', 'Beijing Case 16', 'Beijing Case 17', 'Beijing Case 18', 'Beijing Case 19', 'Beijing Case 20', 'Beijing Case 21', 'Beijing Case 22', 'Beijing Case 23', 'Beijing Case 24', 'Beijing Case 25', 'Beijing Case 26', 'Beijing Case 27', 'Beijing Case 28', 'Beijing Case 29', 'Beijing Case 30', 'Beijing Case 31', 'Beijing Case 32', 'Beijing Case 33', 'Beijing Case 34', 'Beijing Case 35', 'Beijing Case 36', 'Beijing Case 37', 'Beijing Case 38', 'Beijing Case 39']
+Check out the possible transmission chain of this round of illness into Beijing:
+Ejina Banner-Beijing Case 24
+Ejina Banner-Beijing Case 25
+Ejina Banner-Beijing Case 33
+Ejina Banner-Beijing Case 34
+Ejina Banner-Beijing Case 35
+Ejina Banner-Beijing Case 36
+Ejina Banner-Beijing Case 37
+Ejina Banner-Yinchuan Case 1-K42-Beijing Case 39
+
+result = ges_util.cypher_query('match p=(n)--(m) where id(n) in $idlist and not (m:city) and not(m:patient and not(id(m) in $idlist)) return id(n),p',formats=['row','graph'], param={"idlist":chain_vid})
+ges_util.format_cypher_result(result)
+
+vertex_id = 'Beijing Case 2'
+print('View {} possible infection paths:'.format(vertex_id))
+result = ges_util.path_query({
+            "repeat": [
+                {
+                    "operator": "bothV",
+                    "vertex_filter": {
+                        "property_filter": {
+                            "leftvalue": {
+                                "id": ""
+                            },
+                            "predicate": "NOTIN",
+                            "rightvalue": {
+                                "value": ["Beijing"]
+                            }
+                        }
+                    }
+                }
+            ],
+            "until": [
+                {
+                    "vertex_filter": {
+                        "property_filter": {
+                            "leftvalue": {
+                                "id": ""
+                            },
+                            "predicate": "=",
+                            "rightvalue": {
+                                "value": ["Ejina Banner"]
+                            }
+                        }
+                    }
+                }
+            ],
+            "times": 5,
+            "queryType": "Tree",
+            "vertices": ["Beijing Case 2"]
+        })
+ges_util.format_path_query(result)
+
+import time
+print('Connectivity analysis:')
+job_id = ges_util.connected_component()
+result = ges_util.get_job(job_id)
+if 'errorCode' not in result:
+    for i in range(1000):
+        if result['status'] == 'success':
+            break
+        else:
+            time.sleep(1)
+            result = ges_util.get_job(job_id)
+com_dict = {}
+for v_dict in result['data']['outputs']['community']:
+    for key, value in v_dict.items():
+        statement = '''match (p) where id(p)="''' + key + '''" return labels(p)'''
+        v_label = ges_util.cypher_query(statement)['results'][0]['data'][0]['row'][0]
+        if v_label in ['city', 'patient']:
+            com_dict.setdefault(value, []).append(key)
+print('Number of connected branches : {}'.format(len(com_dict)))
+for key, value in com_dict.items():
+    print('Points in Connected Branch ' + key + ' (Focus on cities and patients only):')
+    print(value)
+
+import json
+
+# Save as a JSON file
+with open('result.json','w',encoding='utf-8') as f:
+    f.write(json.dumps(com_dict,ensure_ascii=False))
+
+from modelarts.session import Session
+session = Session()
+bkts = session.obs.list_buckets()  # Obtains OBS buckets. The result is a list.
+
+for buc in bkts:
+    obs_save_path = "obs://" + buc + "/result.json"
+    # Upload result.json file to the bucket.
+    session.obs.upload_file(src_local_file="./result.json", dst_obs_dir=obs_save_path)
+

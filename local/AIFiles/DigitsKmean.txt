@@ -1,0 +1,72 @@
+# Import the required modules.
+import numpy as np
+import matplotlib.pyplot as plt
+
+from sklearn.datasets import load_digits
+from sklearn.preprocessing import scale
+
+from sklearn.model_selection import train_test_split
+from sklearn import cluster
+
+# Import the handwritten digit image data, digits.data,digits.images, digits.target
+digits = load_digits()
+print(digits.images.shape)
+print(digits.images[0])
+print(digits.data.shape)
+print(digits.data[0])
+
+# Preprocess the image data and convert the data into standard normal distribution (the average value is <strong>0</strong> and the variance is <strong>1</strong>).
+data = scale(digits.data)
+print(data.shape)
+print(data[0])
+
+# Define the function for printing handwritten digit images.
+#    images: image data
+#    y: label data
+#    max_n: maximum number of images to be printed
+def print_digits(images, y, max_n=10):
+    # set up the figure size in inches
+    fig = plt.figure(figsize=(12, 12))
+    fig.subplots_adjust(left=0, right=1, bottom=0, top=1, hspace=0.05, wspace=0.05)
+    i = 0
+    while i < max_n and i < images.shape[0]:
+        # plot the images in a matrix of 20x20
+        p = fig.add_subplot(20, 20, i + 1, xticks=[], yticks=[])
+        p.imshow(images[i], cmap=plt.cm.bone)
+        # label the image with the target value
+        p.text(0, 14, str(y[i]))
+        i = i + 1
+
+
+# Print 10 images in the dataset obtained through load_digits().
+print_digits(digits.images, digits.target, max_n=10)
+
+# Use train_test_split to split training data and test data.
+X_train, X_test, y_train, y_test, images_train, images_test = train_test_split(data, digits.target, digits.images,
+                                                                               test_size=0.25, random_state=42)
+
+n_samples, n_features = X_train.shape # n_samples: training sample size; n_features: feature dimension
+n_digits = len(np.unique(y_train)) # n_digits: number of original categories
+labels = y_train # labels: original label
+
+# Use cluster.KMeans to perform cluster analysis on training data.
+#     init: mode for selecting the initial value of the cluster center
+#     n_clusters: number of clusters
+#     random_state: integer or numpy.RandomState type, which can be used to initialize the centroid generator.
+clf = cluster.KMeans(init='k-means++', n_clusters=10, random_state=42)
+clf.fit(X_train) # clf.labels_ corresponds to the category ID of each sample after clustering.
+# Print handwritten digit images after clustering.
+print_digits(images_train, clf.labels_, max_n=10)
+
+# Define the function for printing clustering results.
+#     images: image data
+#     label: clustering result ID
+#     cluster_number: clustering result ID
+def print_cluster(images, label, cluster_number):
+    images = images[label == cluster_number]
+    label = label[label == cluster_number]
+    print_digits(images, label, max_n=10)
+
+
+for i in range(10):
+    print_cluster(images_train, clf.labels_, i)

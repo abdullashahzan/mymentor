@@ -1,0 +1,171 @@
+# download data 
+wget https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com:443/lab2024/20230302/foods_10c.tar.gz
+
+# decompress file
+tar -zxvf foods_10c.tar.gz
+
+import moxing as mox
+mox.file.copy_parallel(${notebook_path}, ${obs_datat_path})
+
+wget https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/train.zip
+
+unzip train.zip
+
+!python ./train/run.py --data_url './foods_10c/images' --train_url './train_output' --train_epochs 20
+
+ wget https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/deploy.zip
+
+unzip deploy.zip
+
+import moxing as mox
+mox.file.copy_parallel(${notebook_deploy_path}, ${obs_deploy_path})
+
+import moxing as mox
+mox.file.copy('./train_output/model/best_model.pth', 'obs://your_obs_bucketName/output/model/best_model.pth')
+
+# -*- coding: utf-8 -*-
+import os
+import sys
+import torch
+from models.resnet import * 
+import numpy as np
+import cv2
+from collections import OrderedDict
+import time
+import copy
+import datetime
+import os
+
+from torchvision import transforms
+from PIL import Image
+from model_service.pytorch_model_service import PTServingBaseService
+
+
+class ModelClass(PTServingBaseService):
+    def __init__(self, model_name='', model_path=r'./best_model.pth'):
+        """
+        TODO Add the process of building models and loading weights in this method. Different models can be customized and modified as required.
+        :param model_name: This parameter must be reserved. You can transfer a random character string value.
+        :param model_path: Path where the model is located. For example, xxx/xxx.h5 and xxx/xxx.pth are the model names in the model package.
+        """
+        self.model_name = model_name  # The line code must be retained and does not need to be modified.
+        self.model_path = model_path  # The line code must be retained and does not need to be modified.
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # image transform
+        self.transform = transforms.Compose(
+                [
+                    transforms.Resize((224, 224)),
+                    transforms.ToTensor(),
+                    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                         std=[0.229, 0.224, 0.225])
+                ])
+      
+        # self.model = torch.load(self.model_path).to(self.device)
+        self.model = resnet50()
+        self.model.load_state_dict(torch.load(self.model_path, self.device))
+        self.model.to(self.device)
+        self.model.eval()
+        # The following is what I use to classify, show the English class name.
+        self.label_id_name_dict = {
+                "0": "barbecue_chilled_noodles",
+                "1": "cream_polenta_cake",
+                "2": "donuts",
+                "3": "egg_pudding",
+                "4": "ice_cream",
+                "5": "mango_pancake",
+                "6": "mashed_potato",
+                "7": "millet_congee",
+                "8": "sandwich",
+                "9": "sweet_and_sour_fish",
+            }
+
+    def _preprocess(self, data):
+        """
+        Preprocess，transform
+        """
+        preprocessed_data = {}
+        for k, v in data.items():
+            for file_name, file_content in v.items():
+                img = Image.open(file_content)
+                img = img.convert('RGB')
+                images = self.transform(img)
+                images = torch.unsqueeze(images, 0).to(self.device)
+                preprocessed_data[k] = images
+        return preprocessed_data
+
+    def _inference(self, data):
+        """
+        TODO Implement the model inference process in this function. Different models can be customized and modified as required.
+        """
+        src_img = data['images']  # Does images look familiar? I define the data in the request in config.json.
+
+        # Mine is a category. Only the Chinese name of the class with the highest probability is returned.
+        with torch.no_grad():
+            output = self.model(src_img)
+        _, pred = output.topk(1, 1, True, True)
+
+        result = self.label_id_name_dict[str(pred.cpu().numpy()[0][0])]
+        return result
+
+{
+    "model_algorithm": "image_classification",
+    "model_type": "PyTorch",
+    "runtime": "pytorch_1.8.0-cuda_10.2-py_3.7-ubuntu_18.04-x86_64",
+    "metrics": {
+        "f1": 0,
+        "accuracy": 0.6253,
+        "precision": 0,
+        "recall": 0
+    },
+    "apis": [
+        {
+            "procotol": "http",
+            "url": "/",
+            "method": "post",
+            "request": {
+                "Content-type": "multipart/form-data",
+                "data": {
+                    "type": "object",
+                    "properties": {
+                        "images": {"type": "file"}
+                    },
+                    "required": ["images"]
+                }
+            },
+            "response": {
+                "Content-type": "multipart/form-data",
+                "data": {
+                    "type": "object",
+                    "properties": {
+                        "result": {"type": "string"}
+                    },
+                    "required": ["result"]
+                }
+            }
+        }
+    ],
+    "dependencies": [
+        {
+            "installer": "pip",
+            "packages": [
+                {
+                    "package_name": "Pillow",
+                    "package_version": "5.0.0",
+                    "restraint": "ATLEAST"
+                }
+            ]
+        }
+    ]
+}
+
+
+
+
+
+
+
+# -------------- #
+
+Custom Algorithm for Image RecThis experiment describes how to create a custom algorithm, create a training job based on that, and deploy an AI application, then deploy a Huawei Real-Time service.Prerequisites: Log in to HUAWEI CLOUDOpen the Browser and go to the HUAWEI CLOUD login page. Select IAM User Login. In the login dialog box, access the HUAWEI CLOUD lab account and password allocated by the system to log in to HUAWEI CLOUD, as shown below.Note: For details about your account information, see the upper part of the lab manual. Do not use your HUAWEI CLOUD account to log in.1. Create a Custom Algorithm1.1 Creating an OBS File Directory1. On the HUAWEI CLOUD console,  move the cursor to the left sidebar, and in the pop-up menu bar,click Service List -> Storage -> Object Storage Service, as shown below.2. In the navigation pane on the left, choose Bucket List and click Create Bucket under Dashboard. As shown in the following figure:3. On the Create Bucket page, perform the following configurations and retain the default values for other parameters:    Region: Select AP-Singapore.   Bucket Name: User-defined. In this example, custom-algo is used.	   Bucket policy: Select Private and click Continue in the dialog box that is displayed.	4. Click Create Now. 5. The bucket is successfully created and displayed in the bucket list. Click the bucket name to go to the details page. As shown in the following figure:6. Click Object > New Folder. As shown in the following figure:Create three folders, named data, code, and output in sequence to store data, code, and exported training models, respectively. The following figure shows the creation.1.2 Downloading Dataset1. Log in to the HUAWEI CLOUD console, move the cursor to the left navigation bar, and choose Service List > EI Enterprise Intelligence > ModelArts, as shown below.	2. On the ModelArts management console, click DevEnviron > Notebook in the navigation bar on the left. The Notebook list page is displayed, as shown below.3. Click Create in the upper left corner of the page to create a notebook and set parameters, as shown below.After setting the parameters, click Next, confirming the product specifications, and then click Submit to complete the creation of the notebook.4. Return to the notebook list page, after the status of the new Notebook changes to Running, click Operation > Open to access the notebook.	1.3 Obtaining and Uploading Data1. On the Notebook page,click Launcher -> Terminal, as shown below.Run the following command to download the dataset: foods_10c. The dataset contains ten categories of food images with 500 images of each category and 5000 images in total.                            Copy Code# download data wget https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com:443/lab2024/20230302/foods_10c.tar.gzAfter downloading, decompress it.                            Copy Code# decompress filetar -zxvf foods_10c.tar.gzThen you can click Refresh button, and you will view the decompressed folder.2. Now, you need to upload the local dataset to the created OBS bucket in the previous step. Click Add button to create a Notebook.3. Complete the following code, and then run it to complete the dataset upload.                            Copy Codeimport moxing as moxmox.file.copy_parallel(${notebook_path}, ${obs_datat_path})NOTICE:● ${notebook_path} indicates the dataset storage path(./foods_10c) in the notebook.● ${obs_data_path} indicates path for storing datasets in OBS. You can copy the OBS path here.4. After running the code, return to OBS and click refresh button  the page. You can see files in the data folder.1.4 Obtaining and Uploading Code	1.  Run the following command to download the training code in terminal on notebook:                            Copy Codewget https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/train.zipThen run the following command to decompress the code file:                            Copy Codeunzip train.zipThe following figure shows the execution result.Then you can click Refresh button, and you will view the decompressed folder.----------------------------------------------1.5 TrainingExecute the following command in the notebook.                            Copy Code!python ./train/run.py --data_url './foods_10c/images' --train_url './train_output' --train_epochs 20After successful execution, you will see 'best_model.pth' in the train_output directory.3. Service deployment3.1 Preparing the Inference CodeBack to the Notebook page. Open the terminal, run the following command to download the training code:                            Copy Code wget https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/deploy.zipRun the following command to decompress the code file:                            Copy Codeunzip deploy.zipBack to the Notebook, add a cell, Complete the following code, and then run it to complete the code upload.                            Copy Codeimport moxing as moxmox.file.copy_parallel(${notebook_deploy_path}, ${obs_deploy_path})NOTICE:● ${notebook_deploy_path} indicates the code storage path(./deploy) in the notebook.● ${obs_deploy_path} indicates path for storing code in OBS. 3.2 Copy best_model.pth to OBS                            Copy Codeimport moxing as moxmox.file.copy('./train_output/model/best_model.pth', 'obs://your_obs_bucketName/output/model/best_model.pth')After completing 3.1 and 3.2, you will see the following content in the OBS directory.3.2 Uploading Inference Code to OBSThen you can back to the OBS path, and refresh page to view the code.`customize_service.py` is the main entry of the inference program. The content is as follows:                            Copy Code# -*- coding: utf-8 -*-import osimport sysimport torchfrom models.resnet import * import numpy as npimport cv2from collections import OrderedDictimport timeimport copyimport datetimeimport osfrom torchvision import transformsfrom PIL import Imagefrom model_service.pytorch_model_service import PTServingBaseServiceclass ModelClass(PTServingBaseService):    def __init__(self, model_name='', model_path=r'./best_model.pth'):        """        TODO Add the process of building models and loading weights in this method. Different models can be customized and modified as required.        :param model_name: This parameter must be reserved. You can transfer a random character string value.        :param model_path: Path where the model is located. For example, xxx/xxx.h5 and xxx/xxx.pth are the model names in the model package.        """        self.model_name = model_name  # The line code must be retained and does not need to be modified.        self.model_path = model_path  # The line code must be retained and does not need to be modified.        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")        # image transform        self.transform = transforms.Compose(                [                    transforms.Resize((224, 224)),                    transforms.ToTensor(),                    transforms.Normalize(mean=[0.485, 0.456, 0.406],                                         std=[0.229, 0.224, 0.225])                ])              # self.model = torch.load(self.model_path).to(self.device)        self.model = resnet50()        self.model.load_state_dict(torch.load(self.model_path, self.device))        self.model.to(self.device)        self.model.eval()        # The following is what I use to classify, show the English class name.        self.label_id_name_dict = {                "0": "barbecue_chilled_noodles",                "1": "cream_polenta_cake",                "2": "donuts",                "3": "egg_pudding",                "4": "ice_cream",                "5": "mango_pancake",                "6": "mashed_potato",                "7": "millet_congee",                "8": "sandwich",                "9": "sweet_and_sour_fish",            }    def _preprocess(self, data):        """        Preprocess，transform        """        preprocessed_data = {}        for k, v in data.items():            for file_name, file_content in v.items():                img = Image.open(file_content)                img = img.convert('RGB')                images = self.transform(img)                images = torch.unsqueeze(images, 0).to(self.device)                preprocessed_data[k] = images        return preprocessed_data    def _inference(self, data):        """        TODO Implement the model inference process in this function. Different models can be customized and modified as required.        """        src_img = data['images']  # Does images look familiar? I define the data in the request in config.json.        # Mine is a category. Only the Chinese name of the class with the highest probability is returned.        with torch.no_grad():            output = self.model(src_img)        _, pred = output.topk(1, 1, True, True)        result = self.label_id_name_dict[str(pred.cpu().numpy()[0][0])]        return resultconfig is the input and output configuration file of the API interface.                            Copy Code{    "model_algorithm": "image_classification",    "model_type": "PyTorch",    "runtime": "pytorch_1.8.0-cuda_10.2-py_3.7-ubuntu_18.04-x86_64",    "metrics": {        "f1": 0,        "accuracy": 0.6253,        "precision": 0,        "recall": 0    },    "apis": [        {            "procotol": "http",            "url": "/",            "method": "post",            "request": {                "Content-type": "multipart/form-data",                "data": {                    "type": "object",                    "properties": {                        "images": {"type": "file"}                    },                    "required": ["images"]                }            },            "response": {                "Content-type": "multipart/form-data",                "data": {                    "type": "object",                    "properties": {                        "result": {"type": "string"}                    },                    "required": ["result"]                }            }        }    ],    "dependencies": [        {            "installer": "pip",            "packages": [                {                    "package_name": "Pillow",                    "package_version": "5.0.0",                    "restraint": "ATLEAST"                }            ]        }    ]}Related dependency code is stored in the models directory.3.3 Creating an AI Application1. Log in to the ModelArts console. In the navigation pane, choose AI Application Management > AI Application. On the displayed page, click Create AI Application. As shown in the following figure:2. On the Create AI Application page, perform the following configurations and retain the default settings for other parameters: Name: In this example, model-custom-algo is used.Meta Model Source: Select OBS.Meta Model: Select '/your_OBS_bucketName/output/model/' 	3. Click Create Now. As shown in the following figure:4. After the submission, the status is Importing. As shown in the following figure:The build is successful and the status is Normal. As shown in the following figure:3.4 Deploying Real-Time Services1. Expand the Application page and choose Deploy > Real-Time Services. As shown in the following figure:2. Set the parameters as follows:Name: please rename as service-custom-algo.Resource Pool: Select Public Resource Pool.AI Application and Configuration: Select My AI Applications, model-custom-algo (sync request), and 0.0.1 (normal). Specofications: CPU: 2vCPUs 8GB.3. Click Next. As shown in the following figure:Then click Submit. As shown in the following figure:Click View Service Details. As shown in the following figure:4. The status is Deploying. As shown in the following figure:The deployment is successful and the status is Running. As shown in the following figure:4. Upload test image and predict the result.1. Download any image from the OBS data directory. As shown in the following figure:2. Upload an image on the Service Prediction page and perform the test. As shown in the following figure:Click Upload to select the test image, and then click Predict. You can view the test result on the right.

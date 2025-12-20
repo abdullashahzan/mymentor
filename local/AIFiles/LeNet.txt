@@ -1,0 +1,148 @@
+import os
+import sys
+
+def load_data_all(datasets_dir):
+    import os
+    import torch
+    import numpy as np
+    import torchvision.datasets.mnist as mnist
+
+    # Define the datasets directory
+    datasets_dir = './datasets'
+    if not os.path.exists(datasets_dir):
+        os.makedirs(datasets_dir)  # Create the datasets directory if it doesn't exist
+    # URL of the MNIST dataset zip file
+    mnist_url = 'https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/MNIST_data.zip'
+    zip_file_path = os.path.join(datasets_dir, 'MNIST_data.zip')
+    # Download the MNIST_data.zip file using wget
+    !wget {mnist_url} -O {zip_file_path}
+    # Unzip the downloaded file into the datasets directory
+    !unzip {zip_file_path} -d {datasets_dir}
+        
+    # Read all training sets.
+    train_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-images-idx3-ubyte')).numpy().astype(np.uint8)
+    train_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-labels-idx1-ubyte')).numpy().astype(np.uint8)
+    # Read all test sets.
+    test_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-images-idx3-ubyte')).numpy().astype(np.uint8)
+    test_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-labels-idx1-ubyte')).numpy().astype(np.uint8)
+
+    print('training set scale:', len(train_data), ',test set scale:', len(test_data))
+
+    train_x = train_data.reshape(-1, 28*28)  # Change each set to a row vector to facilitate calculation.
+    train_y = train_label.reshape(-1, 1)
+
+    test_x = test_data.reshape(-1, 28*28)  # Change each set to a row vector to facilitate calculation.
+    test_y = test_label.reshape(-1, 1)
+
+    train_data = np.hstack((train_x, train_y))  # Stack two arrays horizontally.
+    test_data = np.hstack((test_x, test_y))  # Stack two arrays horizontally.
+    np.random.seed(0)
+    np.random.shuffle(train_data)  # Disorder the row sequence of the train_data array.
+    np.random.shuffle(test_data)  # Disorder the row sequence of the test_data array.
+    train_x = train_data[:, :-1]  # Obtain train_x and train_y again.
+    train_y = train_data[:, -1].reshape(-1, 1)
+    test_x = test_data[:, :-1]  # Obtain test_x and test_y again.
+    test_y = test_data[:, -1].reshape(-1, 1)
+
+    train_x = torch.FloatTensor(train_x) / 255.0
+    train_y = torch.LongTensor(train_y).squeeze()
+    test_x = torch.FloatTensor(test_x) / 255.0
+    test_y = torch.LongTensor(test_y).squeeze()
+
+    return train_x, train_y, test_x, test_y
+
+datasets_dir = './datasets'
+train_x, train_y, test_x, test_y = load_data_all(datasets_dir)
+train_x = train_x.view(-1, 1, 28, 28)
+test_x = test_x.view(-1, 1, 28, 28)
+
+import torch
+from torch import nn
+
+class Network(nn.Module):
+    def __init__(self, num_of_weights):
+        torch.manual_seed(0)
+        super().__init__()
+        self.conv1 = nn.Sequential( # input_size=(1*28*28)
+            nn.Conv2d(in_channels=1, out_channels=6, kernel_size=5, stride=1, padding=2), # padding=2 ensures that the input and output sizes are the same. output_size = 6 x 28 x 28
+            nn.ReLU(),  # input_size=(6*28*28)
+            nn.MaxPool2d(kernel_size=2, stride=2))  # output_size=(6*14*14)
+        
+        self.conv2 = nn.Sequential( # input_size=(6*14*14)
+            nn.Conv2d(in_channels=6, out_channels=16, kernel_size=5, stride=1, padding=0),  # output_size=(16*10*10)
+            nn.ReLU(),  # input_size=(16*10*10)
+            nn.MaxPool2d(kernel_size=2, stride=2))  # input_size=(16*5*5)
+        
+        self.fc1 = nn.Sequential(
+            nn.Linear(16 * 5 * 5, 120),
+            nn.ReLU()
+        )
+        
+        self.fc2 = nn.Sequential(
+            nn.Linear(120, 84),
+            nn.ReLU()
+        )
+        
+        self.fc3 = nn.Linear(84, 10)
+    
+    def forward(self, x):
+        """
+        Forward propagation function
+        """
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = x.view(x.size()[0], -1)
+        x = self.fc1(x)
+        x = self.fc2(x)
+        out = self.fc3(x)
+        
+        return out
+        
+    def evaluate(self, pred_y, true_y):
+        """
+        Accuracy statistics function, which is the same as that in the previous section.
+        """
+        pred_labels = torch.argmax(pred_y, dim=1)
+        acc = (pred_labels == true_y).float().mean()
+        return acc
+
+import torch.nn.functional as F
+loss_fun = F.cross_entropy
+
+net = Network(28*28)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+net = net.to(device)
+optimizer = torch.optim.SGD(net.parameters(), lr=0.01)
+
+def train(net, train_x, train_y, test_x, test_y, max_epochs=100):
+    train_losses = []
+    test_losses = []
+    train_accs = []
+    test_accs = []
+    for epoch in range(1, max_epochs + 1):
+        net.train()  # Switch to the training mode.
+        train_x, train_y = train_x.to(device), train_y.to(device)
+        pred_y_train = net.forward(train_x)  # Forward propagation.
+        train_loss = loss_fun(pred_y_train, train_y)  # Calculate the loss.
+
+        # Calculate the gradient and update the weight.
+        train_loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+
+        if (epoch == 1) or (epoch % 200 == 0):
+            net.eval()  # Switch to the evaluation mode, in which the gradient is not calculated so the calculation is faster.
+            test_x, test_y = test_x.to(device), test_y.to(device)
+            pred_y_test = net.forward(test_x)
+            test_loss = loss_fun(pred_y_test, test_y)
+            train_acc = net.evaluate(pred_y_train, train_y)
+            test_acc = net.evaluate(pred_y_test, test_y)
+            print('epoch %d, train_loss %.4f, test_loss %.4f, train_acc: %.4f, test_acc: %.4f' % (epoch, train_loss.item(), test_loss.item(), train_acc, test_acc))
+    return train_losses, test_losses, train_accs, test_accs
+
+import time
+start_time = time.time()
+max_epochs = 3000
+train_losses, test_losses, train_accs, test_accs = train(net, train_x, train_y, test_x, test_y, max_epochs=max_epochs)
+print('cost time: %.1f s' % int(time.time() - start_time))
+

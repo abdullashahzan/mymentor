@@ -1,0 +1,145 @@
+import os
+import sys
+
+def load_data_zeros_ones(datasets_dir):
+    import os
+    import numpy as np
+    import torchvision.datasets.mnist as mnist
+
+    # Define the datasets directory
+    datasets_dir = './datasets'
+    if not os.path.exists(datasets_dir):
+        os.makedirs(datasets_dir)  # Create the datasets directory if it doesn't exist
+    # URL of the MNIST dataset zip file
+    mnist_url = 'https://labfiles-singapore.obs.ap-southeast-3.myhuaweicloud.com/modelarts/MNIST_data.zip'
+    zip_file_path = os.path.join(datasets_dir, 'MNIST_data.zip')
+    # Download the MNIST_data.zip file using wget
+    !wget {mnist_url} -O {zip_file_path}
+    # Unzip the downloaded file into the datasets directory
+    !unzip {zip_file_path} -d {datasets_dir}
+    
+    # Read all training samples.
+    train_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-images-idx3-ubyte')).numpy().astype(np.uint8)
+    train_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/train-labels-idx1-ubyte')).numpy().astype(np.uint8)
+    # Read all test samples.
+    test_data = mnist.read_image_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-images-idx3-ubyte')).numpy().astype(np.uint8)
+    test_label = mnist.read_label_file(os.path.join(datasets_dir, 'MNIST_data/raw/t10k-labels-idx1-ubyte')).numpy().astype(np.uint8)
+
+    train_zeros = train_data[train_label == 0]
+    train_ones = train_data[train_label == 1]
+    test_zeros = test_data[test_label == 0]
+    test_ones = test_data[test_label == 1]
+
+    print('Digit 0: Training set scale: ', len(train_zeros), ', Test set scale: ', len(test_zeros))
+    print('Digit 1: Training set scale: ', len(train_ones), ', Test set scale: ', len(test_ones))
+    
+    train_x = np.vstack((train_zeros, train_ones)) # Summarize the samples of digits 0 and 1. <strong>np.vstack</strong> indicates stacking two arrays vertically.
+    train_y = np.array([0] * len(train_zeros) + [1] * len(train_ones)).astype(np.uint8)
+
+    test_x = np.vstack((test_zeros, test_ones))  # Summarize the samples of digits 0 and 1. <strong>np.vstack</strong> indicates stacking two arrays vertically.
+    test_y = np.array([0] * len(test_zeros) + [1] * len(test_ones)).astype(np.uint8)
+    
+    train_x = train_x.reshape(-1, 28*28)  # Reshape each sample into a row vector to facilitate calculation.
+    train_y = train_y.reshape(-1, 1)
+
+    test_x = test_x.reshape(-1, 28*28)  # Reshape each sample into a row vector to facilitate calculation.
+    test_y = test_y.reshape(-1, 1)
+    
+    train_data = np.hstack((train_x, train_y))  # <strong>np.hstack</strong> indicates stacking two arrays horizontally.
+    test_data = np.hstack((test_x, test_y))  # <strong>np.hstack</strong> indicates stacking two arrays horizontally.
+    np.random.seed(0)
+    np.random.shuffle(train_data)  # Shuffle the rows of the <strong>train_data</strong> array.
+    np.random.shuffle(test_data)  # Shuffle the rows of the <strong>test_data</strong> array.
+    train_x = train_data[:, :-1]  # Reshape <strong>train_x</strong> and <strong>train_y</strong>.
+    train_y = train_data[:, -1].reshape(-1, 1)
+    test_x = test_data[:, :-1]  # Reshape <strong>train_x</strong> and <strong>train_y</strong>.
+    test_y = test_data[:, -1].reshape(-1, 1)
+    
+    train_x = train_x.astype(np.float) / 255.0
+    train_y = train_y.astype(np.float)
+
+    test_x = test_x.astype(np.float) / 255.0
+    test_y = test_y.astype(np.float)
+
+    return train_x, train_y, test_x, test_y
+datasets_dir = './datasets'
+train_x, train_y, test_x, test_y = load_data_zeros_ones(datasets_dir)
+
+import torch
+import numpy as np
+
+train_x = torch.tensor(train_x.astype(np.float32))
+train_y = torch.tensor(train_y.astype(np.float32))
+test_x = torch.tensor(test_x.astype(np.float32))
+test_y = torch.tensor(test_y.astype(np.float32))
+
+from torch import nn
+
+class Network(nn.Module):
+    def __init__(self, num_of_weights):
+        torch.manual_seed(0)
+        super().__init__()
+        self.fc = nn.Linear(in_features=num_of_weights, out_features=1, bias=True)  # Define a fully connected layer.
+        self.nonlinearity = nn.Sigmoid()
+    
+    def forward(self, x):  # Define a calculation process to implement a weighted summation unit and a non-linear function unit.
+        z = self.fc(x)
+        pred_y = self.nonlinearity(z)
+        return pred_y
+
+import torch.nn.functional as F
+loss_fun = F.mse_loss
+
+class Network(nn.Module):
+    def __init__(self, num_of_weights):
+        torch.manual_seed(0)
+        super().__init__()
+        self.fc = nn.Linear(in_features=num_of_weights, out_features=1, bias=True)  # Define a fully connected layer.
+        self.nonlinearity = nn.Sigmoid()
+    
+    def forward(self, x):  # Define a calculation process to implement a weighted summation unit and a non-linear function unit.
+        z = self.fc(x)
+        pred_y = self.nonlinearity(z)
+        return pred_y
+   
+    def evaluate(self, pred_y, true_y, threshold=0.5):
+        pred_y[pred_y < threshold] = 0  # If the predicted value is less than 0.5, the digit is 0.
+        pred_y[pred_y >= threshold] = 1
+
+        acc = (pred_y == true_y).float().mean()
+        return acc
+
+
+net = Network(28*28)  # Create a network.
+optimizer = torch.optim.SGD(net.parameters(), lr=0.01)  # Implement gradient descent.
+
+def train(net, train_x, train_y, test_x, test_y, max_epochs=100):
+    train_losses = []
+    test_losses = []
+    train_accs = []
+    test_accs = []
+    for epoch in range(1, max_epochs + 1):
+        net.train()  # Switch to the training mode.
+        pred_y_train = net.forward(train_x)  # forward propagation
+        train_loss = loss_fun(pred_y_train, train_y)  # Calculate the loss.
+
+        # Calculate the gradient and update the weight.
+        train_loss.backward()
+        optimizer.step()
+        optimizer.zero_grad()
+
+        if (epoch == 1) or (epoch % 10 == 0):
+            net.eval()  # Switch to the evaluation mode, in which the gradient is not calculated so the calculation is faster.
+            pred_y_test = net.forward(test_x)
+            test_loss = loss_fun(pred_y_test, test_y)
+            train_acc = net.evaluate(pred_y_train, train_y)
+            test_acc = net.evaluate(pred_y_test, test_y)
+            print('epoch %d, train_loss %.4f, test_loss %.4f, train_acc: %.4f, test_acc: %.4f' % (epoch, train_loss.item(), test_loss.item(), train_acc, test_acc))
+    return train_losses, test_losses, train_accs, test_accs
+
+import time
+start_time = time.time()
+max_epochs = 50
+train_losses, test_losses, train_accs, test_accs = train(net, train_x, train_y, test_x, test_y, max_epochs=max_epochs)
+print('cost time: %.1f s' % (time.time() - start_time))
+

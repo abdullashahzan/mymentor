@@ -1,0 +1,28 @@
+import numpy as np
+# Import the LogisticRegression method from sklearn.
+from sklearn.linear_model import LogisticRegression
+# Import the function of splitting training and test sets.
+from sklearn.model_selection import train_test_split
+import moxing as mox
+import os
+
+if not os.path.exists('info.txt'):
+    mox.file.copy('obs://dtse-casezoo/course/hwc_edu/machine_learning/datasets/logistic_regression/info.txt', 'info.txt')
+data = np.loadtxt("./info.txt",
+                  delimiter=",") #Upload the data to OBS and put it in the same working directory as the project. For a local path, enter the file name only. Prefix the file name with **./work/**, so ModelArts can detect the data location.
+print(data)
+
+# Split the data into a training set (70%) and a test set (30%).
+train_x, test_x, train_y, test_y = train_test_split(data[:, 0:2], data[:, 2], test_size=0.3)
+# train_test_split(x, y, test_size=0.3) # **test_size** indicates the ratio of the test set to the entire dataset; *x*: dataset; *y*: target features of the dataset.
+
+model = LogisticRegression()
+
+model.fit(train_x, train_y)
+
+# Test the model.
+pred_y = model.predict(test_x)
+# Check whether the prediction is consistent with the actual value.
+print(pred_y == test_y)
+print(model.score(test_x, test_y))
+
